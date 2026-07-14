@@ -72,6 +72,26 @@ func (b *Builder) buildOutbounds(cfg netbridge.BackendConfig) []map[string]any {
 }
 
 func (b *Builder) buildOutboundSettings(cfg netbridge.BackendConfig) map[string]any {
+	protocol := string(cfg.Profile.Protocol)
+
+	if protocol == "vless" {
+		user := map[string]any{
+			"id": cfg.Profile.Server,
+		}
+		if cfg.Profile.Flow != "" {
+			user["flow"] = cfg.Profile.Flow
+		}
+		return map[string]any{
+			"vnext": []map[string]any{
+				{
+					"address": cfg.Profile.Server,
+					"port":    cfg.Profile.Port,
+					"users":   []map[string]any{user},
+				},
+			},
+		}
+	}
+
 	settings := map[string]any{
 		"servers": []map[string]any{
 			{
@@ -103,7 +123,25 @@ func (b *Builder) buildStreamSettings(cfg netbridge.BackendConfig) map[string]an
 		"network": cfg.Profile.Transport.Type,
 	}
 
-	if cfg.Profile.TLS.ServerName != "" {
+	if cfg.Profile.TLS.RealityPublicKey != "" {
+		stream["security"] = "reality"
+		fp := cfg.Profile.TLS.Fingerprint
+		if fp == "" {
+			fp = "chrome"
+		}
+		realitySettings := map[string]any{
+			"show":        false,
+			"fingerprint": fp,
+			"serverName":  cfg.Profile.TLS.ServerName,
+			"publicKey":   cfg.Profile.TLS.RealityPublicKey,
+			"shortId":     cfg.Profile.TLS.RealityShortID,
+			"spiderX":     "",
+		}
+		if cfg.Profile.TLS.MLDSA65Verify != "" {
+			realitySettings["mldsa65Verify"] = cfg.Profile.TLS.MLDSA65Verify
+		}
+		stream["realitySettings"] = realitySettings
+	} else if cfg.Profile.TLS.Enabled {
 		stream["security"] = "tls"
 		stream["tlsSettings"] = map[string]any{
 			"serverName":    cfg.Profile.TLS.ServerName,

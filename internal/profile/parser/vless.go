@@ -33,8 +33,10 @@ func ParseVLESS(raw string) (*netbridge.Profile, error) {
 
 	query := u.Query()
 
+	security := query.Get("security")
+
 	tls := netbridge.TLSConfig{
-		Enabled:       true,
+		Enabled:       security != "none",
 		ServerName:    query.Get("sni"),
 		Fingerprint:   query.Get("fp"),
 		AllowInsecure: query.Get("allowInsecure") == "1",
@@ -50,15 +52,28 @@ func ParseVLESS(raw string) (*netbridge.Profile, error) {
 		Host: query.Get("host"),
 	}
 
+	flow := query.Get("flow")
+	if flow != "" && flow != "xtls-rprx-vision" {
+		// Unknown flow value — keep as-is for forward compatibility
+	}
+
+	if flow == "xtls-rprx-vision" && !tls.Enabled {
+		return nil, fmt.Errorf("flow xtls-rprx-vision requires TLS or Reality (security must not be none)")
+	}
+
+	encryption := query.Get("encryption")
+
 	return &netbridge.Profile{
-		Name:      u.Fragment,
-		Protocol:  netbridge.ProtocolVLESS,
-		Backend:   "xray",
-		RawURI:    raw,
-		Server:    server,
-		Port:      port,
-		Transport: transport,
-		TLS:       tls,
-		Tags:      tags,
+		Name:       u.Fragment,
+		Protocol:   netbridge.ProtocolVLESS,
+		Backend:    "xray",
+		RawURI:     raw,
+		Server:     server,
+		Port:       port,
+		Transport:  transport,
+		TLS:        tls,
+		Flow:       flow,
+		Encryption: encryption,
+		Tags:       tags,
 	}, nil
 }

@@ -40,20 +40,22 @@ const (
 )
 
 type Profile struct {
-	ID        string            `json:"id" yaml:"id"`
-	Name      string            `json:"name" yaml:"name"`
-	Protocol  Protocol          `json:"protocol" yaml:"protocol"`
-	Backend   string            `json:"backend" yaml:"backend"`
-	RawURI    string            `json:"raw_uri,omitempty" yaml:"raw_uri,omitempty"`
-	Server    string            `json:"server" yaml:"server"`
-	Port      int               `json:"port" yaml:"port"`
-	Transport TransportConfig   `json:"transport" yaml:"transport"`
-	TLS       TLSConfig         `json:"tls" yaml:"tls"`
-	Outbound  map[string]any    `json:"outbound" yaml:"outbound"`
-	Score     int               `json:"score" yaml:"score"`
-	Tags      []string          `json:"tags,omitempty" yaml:"tags,omitempty"`
-	CreatedAt time.Time         `json:"created_at" yaml:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at" yaml:"updated_at"`
+	ID         string            `json:"id" yaml:"id"`
+	Name       string            `json:"name" yaml:"name"`
+	Protocol   Protocol          `json:"protocol" yaml:"protocol"`
+	Backend    string            `json:"backend" yaml:"backend"`
+	RawURI     string            `json:"raw_uri,omitempty" yaml:"raw_uri,omitempty"`
+	Server     string            `json:"server" yaml:"server"`
+	Port       int               `json:"port" yaml:"port"`
+	Transport  TransportConfig   `json:"transport" yaml:"transport"`
+	TLS        TLSConfig         `json:"tls" yaml:"tls"`
+	Flow       string            `json:"flow,omitempty" yaml:"flow,omitempty"`
+	Encryption string            `json:"encryption,omitempty" yaml:"encryption,omitempty"`
+	Outbound   map[string]any    `json:"outbound" yaml:"outbound"`
+	Score      int               `json:"score" yaml:"score"`
+	Tags       []string          `json:"tags,omitempty" yaml:"tags,omitempty"`
+	CreatedAt  time.Time         `json:"created_at" yaml:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at" yaml:"updated_at"`
 }
 
 type TransportConfig struct {
@@ -71,6 +73,7 @@ type TLSConfig struct {
 	AllowInsecure   bool     `json:"allow_insecure,omitempty" yaml:"allow_insecure,omitempty"`
 	RealityPublicKey string  `json:"reality_public_key,omitempty" yaml:"reality_public_key,omitempty"`
 	RealityShortID   string  `json:"reality_short_id,omitempty" yaml:"reality_short_id,omitempty"`
+	MLDSA65Verify   string   `json:"mldsa65_verify,omitempty" yaml:"mldsa65_verify,omitempty"`
 }
 
 type Session struct {
