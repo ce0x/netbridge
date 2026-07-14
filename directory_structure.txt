@@ -1,0 +1,188 @@
+netbridge/
+│
+├── cmd/                                 # CLI entry points (cobra commands)
+│   ├── main.go                          # Binary entry: sets up cobra root + DI
+│   ├── root.go                          # Root command, global flags, --json, --quiet
+│   ├── connect.go                       # netbridge connect [profile] [--mode]
+│   ├── disconnect.go                    # netbridge disconnect
+│   ├── restart.go                       # netbridge restart / reload
+│   ├── status.go                        # netbridge status [--json]
+│   ├── profile.go                       # netbridge import / export / list / use / show ...
+│   ├── test.go                          # netbridge test [profile]
+│   ├── health.go                        # netbridge health [profile]
+│   ├── benchmark.go                     # netbridge benchmark [--all]
+│   ├── route.go                         # netbridge route add/remove/list/clear
+│   ├── failover.go                      # netbridge failover create/list/delete
+│   ├── auto.go                          # netbridge auto
+│   ├── run.go                           # netbridge run <cmd...>
+│   ├── dns.go                           # netbridge dns list/use/benchmark/reset
+│   ├── env.go                           # netbridge env / unset
+│   ├── logs.go                          # netbridge logs [--follow]
+│   ├── stats.go                         # netbridge stats [profile]
+│   ├── top.go                           # netbridge top (live dashboard)
+│   ├── service.go                       # netbridge service install/start/stop/status
+│   ├── backup.go                        # netbridge backup / restore
+│   ├── tui.go                           # netbridge tui (launches TUI mode)
+│   └── help.go                          # netbridge help [command|topic]
+│
+├── internal/
+│   │
+│   ├── core/                            # Orchestrator — wires all services together
+│   │   ├── engine.go                    # CoreEngine implementation
+│   │   ├── engine_test.go
+│   │   ├── eventbus.go                  # Internal pub/sub for cross-service events
+│   │   ├── di.go                        # Dependency injection / service wiring
+│   │   └── state.go                     # Global runtime state (active session, etc.)
+│   │
+│   ├── profile/                         # Profile Manager
+│   │   ├── manager.go                   # ProfileManager implementation
+│   │   ├── manager_test.go
+│   │   ├── store.go                     # Read/write encrypted profile files
+│   │   ├── parser/
+│   │   │   ├── vless.go                 # Parse vless:// URIs
+│   │   │   ├── vmess.go                 # Parse vmess:// (base64 JSON)
+│   │   │   ├── trojan.go                # Parse trojan:// URIs
+│   │   │   ├── shadowsocks.go           # Parse ss:// URIs
+│   │   │   ├── wireguard.go             # Parse .conf WireGuard configs
+│   │   │   ├── openvpn.go               # Parse .ovpn configs
+│   │   │   └── subscription.go          # Fetch and parse subscription URLs
+│   │   └── validator.go                 # Profile validation logic
+│   │
+│   ├── session/                         # Session Manager
+│   │   ├── manager.go                   # SessionManager implementation
+│   │   ├── manager_test.go
+│   │   ├── state.go                     # Atomic state persistence to disk
+│   │   ├── recovery.go                  # Crash recovery on startup
+│   │   └── env.go                       # Build proxy env vars from active session
+│   │
+│   ├── routing/                         # Routing Engine
+│   │   ├── engine.go                    # RoutingEngine implementation
+│   │   ├── engine_test.go
+│   │   ├── matcher.go                   # Domain/CIDR/keyword pattern matching
+│   │   ├── store.go                     # Persist routing rules to disk
+│   │   └── compiler.go                  # Compile rules → backend-specific config
+│   │
+│   ├── health/                          # Health Engine + Watchdog
+│   │   ├── engine.go                    # HealthEngine implementation
+│   │   ├── engine_test.go
+│   │   ├── watchdog.go                  # Background goroutine, auto-reconnect loop
+│   │   ├── checker.go                   # TCP probe, DNS check, TLS verify, ping
+│   │   └── failover.go                  # FailoverChain switching logic
+│   │
+│   ├── benchmark/                       # Benchmark Engine
+│   │   ├── engine.go                    # BenchmarkEngine implementation
+│   │   ├── engine_test.go
+│   │   ├── runner.go                    # Run latency + throughput probes
+│   │   └── scorer.go                    # Weighted score formula
+│   │
+│   ├── dns/                             # DNS Engine
+│   │   ├── engine.go                    # DNSEngine implementation
+│   │   ├── presets.go                   # Cloudflare, Google, Quad9, AdGuard, etc.
+│   │   ├── bench.go                     # DNS latency benchmark
+│   │   └── resolver.go                  # Write resolv.conf / systemd-resolved
+│   │
+│   ├── stats/                           # Traffic Statistics
+│   │   ├── collector.go                 # Collect bytes_up/down from backends
+│   │   ├── store.go                     # Persist stats to disk
+│   │   └── reporter.go                  # Format stats for CLI/TUI/JSON output
+│   │
+│   ├── security/                        # Encryption + credential handling
+│   │   ├── crypto.go                    # AES-256-GCM encrypt/decrypt
+│   │   ├── keyring.go                   # Derive encryption key from machine ID
+│   │   ├── mask.go                      # Mask sensitive fields in logs/output
+│   │   └── permissions.go               # Enforce file permissions on startup
+│   │
+│   └── config/                          # Global application configuration
+│       ├── config.go                    # Config struct + defaults
+│       ├── loader.go                    # Load /etc/netbridge/config.yaml
+│       └── migrate.go                   # Config schema migration between versions
+│
+├── adapters/                            # Backend Adapter implementations
+│   │
+│   ├── xray/                            # Xray-core adapter
+│   │   ├── adapter.go                   # Implements Backend interface
+│   │   ├── adapter_test.go
+│   │   ├── builder.go                   # Build xray JSON config from Profile
+│   │   ├── downloader.go                # Download/verify xray binary
+│   │   └── process.go                   # Launch/monitor xray subprocess
+│   │
+│   ├── singbox/                         # Sing-box adapter
+│   │   ├── adapter.go
+│   │   ├── builder.go                   # Build sing-box JSON config
+│   │   └── process.go
+│   │
+│   ├── wireguard/                       # Native WireGuard adapter
+│   │   ├── adapter.go
+│   │   ├── iface.go                     # Create/delete WireGuard interfaces via wgctrl
+│   │   └── routes.go                    # Manage kernel routing table
+│   │
+│   └── openvpn/                         # OpenVPN adapter
+│       ├── adapter.go
+│       └── process.go
+│
+├── tui/                                 # Interactive TUI (bubbletea)
+│   ├── app.go                           # Root bubbletea Model + Init/Update/View
+│   ├── keymap.go                        # All keybindings in one place
+│   ├── styles.go                        # lipgloss styles
+│   ├── statusbar.go                     # Bottom status bar: profile, status, uptime, traffic
+│   ├── wizard.go                        # First-run import wizard
+│   └── views/
+│       ├── menu.go                      # Main menu view
+│       ├── profiles.go                  # Profile list view
+│       ├── connect.go                   # Connection view with live stats
+│       ├── benchmark.go                 # Benchmark results view
+│       ├── routing.go                   # Route rules view
+│       ├── dns.go                       # DNS manager view
+│       ├── logs.go                      # Scrollable logs view
+│       ├── stats.go                     # Traffic stats / top view
+│       └── settings.go                  # Settings editor view
+│
+├── plugins/                             # Plugin SDK + bundled example plugins
+│   ├── sdk.go                           # Plugin interface + loader
+│   ├── registry.go                      # In-process plugin registry
+│   └── examples/
+│       └── mock/
+│           └── mock.go                  # No-op mock backend for testing
+│
+├── pkg/                                 # Reusable packages (no internal imports)
+│   ├── uri/                             # Generic URI parsing utilities
+│   ├── netutil/                         # TCP probe, TLS check, ICMP ping
+│   ├── humanize/                        # Format bytes, durations, latency
+│   ├── jsonout/                         # Consistent JSON output envelope
+│   │   └── envelope.go                  # {"success":bool,"data":...,"error":...}
+│   └── sysinfo/                         # Machine ID, kernel version, OS detection
+│
+├── tests/
+│   ├── unit/                            # Fast, no-I/O unit tests
+│   ├── integration/                     # Tests with real backend processes
+│   │   ├── xray_test.go
+│   │   └── wireguard_test.go
+│   ├── e2e/                             # Full CLI command tests
+│   │   ├── connect_test.go
+│   │   └── import_test.go
+│   └── fixtures/                        # Sample profile URIs, config files
+│       ├── profiles/
+│       └── configs/
+│
+├── scripts/
+│   ├── install.sh                       # One-line installer (curl | bash)
+│   ├── build.sh                         # Cross-compile for amd64 + arm64
+│   ├── release.sh                       # Tag, build, upload release artifacts
+│   └── dev-setup.sh                     # Dev environment bootstrap
+│
+├── systemd/
+│   └── netbridge.service                # systemd unit template
+│
+├── docs/
+│   ├── architecture.md
+│   ├── commands.md
+│   ├── protocols.md
+│   ├── plugins.md
+│   └── security.md
+│
+├── Makefile                             # build, test, lint, install, release targets
+├── go.mod
+├── go.sum
+├── .golangci.yml                        # Linter configuration
+├── .goreleaser.yml                      # GoReleaser configuration
+└── README.md

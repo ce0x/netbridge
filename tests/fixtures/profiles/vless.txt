@@ -1,0 +1,1 @@
+vless://test-uuid-1234@us.example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=TEST_PUBLIC_KEY&sid=abc123&type=tcp#US-Reality-VLESS

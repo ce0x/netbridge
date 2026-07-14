@@ -1,0 +1,32 @@
+run:
+  timeout: 5m
+  issues-exit-code: 1
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gocritic
+    - gofmt
+
+linters-settings:
+  errcheck:
+    check-blank: true
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gocritic
