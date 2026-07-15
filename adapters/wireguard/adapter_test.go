@@ -95,6 +95,25 @@ func TestAdapter_StartMissingPublicKey(t *testing.T) {
 	}
 }
 
+func TestAdapter_StartMissingAddress(t *testing.T) {
+	a := New()
+	cfg := netbridge.BackendConfig{
+		Profile: netbridge.Profile{
+			Outbound: map[string]any{
+				"private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+				"public_key":  "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+			},
+		},
+	}
+	err := a.Start(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("Start should fail without address")
+	}
+	if !strings.Contains(err.Error(), "address") {
+		t.Errorf("error should mention address, got: %v", err)
+	}
+}
+
 func TestAdapter_AlreadyRunning(t *testing.T) {
 	a := New()
 	a.running = true

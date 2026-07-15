@@ -1,4 +1,4 @@
-﻿package wireguard
+package wireguard
 
 import (
 	"context"
@@ -15,14 +15,14 @@ import (
 )
 
 type Adapter struct {
-	config    netbridge.BackendConfig
-	iface     *Interface
-	routes    *RouteManager
-	running   bool
-	ifaceName string
+	config     netbridge.BackendConfig
+	iface      *Interface
+	routes     *RouteManager
+	running    bool
+	ifaceName  string
 	allowedIPs []net.IPNet
-	startAt   time.Time
-	mu        sync.Mutex
+	startAt    time.Time
+	mu         sync.Mutex
 }
 
 func New() *Adapter {
@@ -59,8 +59,7 @@ func getFieldString(outbound map[string]any, key string) (string, error) {
 
 func parseAllowedIPs(raw string) ([]net.IPNet, error) {
 	var result []net.IPNet
-	parts := strings.Split(raw, ",")
-	for _, part := range parts {
+	for _, part := range strings.Split(raw, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -106,56 +105,80 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 		return fmt.Errorf("parse public key: %w", err)
 	}
 
+	var endpoint *net.UDPAddr
+	if epStr, err := getFieldString(cfg.Profile.Outbound, "endpoint"); err == nil {
+		resolver := &net.Resolver{}
+		ips, resolveErr := resolver.LookupIPAddr(ctx, epStr)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve endpoint %q: %w", epStr, resolveErr)
+		}
+		if len(ips) == 0 {
+			return fmt.Errorf("resolve endpoint %q: no addresses found", epStr)
+		}
+		port := 51820
+		if idx := strings.LastIndex(epStr, ":"); idx != -1 {
+			fmt.Sscanf(epStr[idx:], ":%d", &port)
+		}
+		endpoint = &net.UDPAddr{IP: ips[0].IP, Port: port}
+	}
+
+	var allowedIPs []net.IPNet
+	if aipsStr, err := getFieldString(cfg.Profile.Outbound, "allowed_ips"); err == nil {
+		aips, parseErr := parseAllowedIPs(aipsStr)
+		if parseErr != nil {
+			return fmt.Errorf("parse allowed_ips: %w", parseErr)
+		}
+		allowedIPs = aips
+	}
+
 	a.iface = NewInterface(a.ifaceName)
 	if err := a.iface.Create(nil); err != nil {
 		return fmt.Errorf("create interface: %w", err)
 	}
 
-	var endpoint *net.UDPAddr
-	if epStr, err := getFieldString(cfg.Profile.Outbound, "endpoint"); err == nil {
-		var resolveErr error
-		endpoint, resolveErr = net.ResolveUDPAddr("udp", epStr)
-		if resolveErr != nil {
-			return fmt.Errorf("resolve endpoint: %w", resolveErr)
+	rollback := func() {
+		if a.iface != nil {
+			_ = a.iface.Delete()
+			a.iface = nil
 		}
 	}
 
 	if err := a.iface.ConfigurePrivateKey(privateKey); err != nil {
+		rollback()
 		return fmt.Errorf("set private key: %w", err)
 	}
 
-	a.allowedIPs = nil
-	if aipsStr, err := getFieldString(cfg.Profile.Outbound, "allowed_ips"); err == nil {
-		aips, err := parseAllowedIPs(aipsStr)
-		if err != nil {
-			return fmt.Errorf("parse allowed_ips: %w", err)
-		}
-		a.allowedIPs = aips
-	}
-
 	keepalive := 25 * time.Second
-	if err := a.iface.AddPeerWithKeepAlive(peerKey, endpoint, a.allowedIPs, keepalive); err != nil {
+	if err := a.iface.AddPeerWithKeepAlive(peerKey, endpoint, allowedIPs, keepalive); err != nil {
+		rollback()
 		return fmt.Errorf("add peer: %w", err)
 	}
 
 	addrStr, err := getFieldString(cfg.Profile.Outbound, "address")
 	if err != nil {
-		log.Printf("wireguard: no address field, skipping IP assignment: %v", err)
-	} else {
-		if err := a.iface.SetAddr(addrStr); err != nil {
-			return fmt.Errorf("set address: %w", err)
-		}
+		rollback()
+		return fmt.Errorf("address (required): %w", err)
+	}
+	if err := a.iface.SetAddr(addrStr); err != nil {
+		rollback()
+		return fmt.Errorf("set address: %w", err)
 	}
 
-	if err := a.iface.SetMTU(1420); err != nil {
-		log.Printf("wireguard: set MTU failed (non-fatal): %v", err)
+	mtu := 1420
+	if mtuStr, err := getFieldString(cfg.Profile.Outbound, "mtu"); err == nil {
+		fmt.Sscanf(mtuStr, "%d", &mtu)
+	}
+	if err := a.iface.SetMTU(mtu); err != nil {
+		log.Printf("wireguard: set MTU %d failed (non-fatal): %v", mtu, err)
 	}
 
 	if err := a.iface.SetUp(); err != nil {
+		rollback()
 		return fmt.Errorf("interface up: %w", err)
 	}
 
-	for _, aip := range a.allowedIPs {
+	a.allowedIPs = allowedIPs
+	for _, aip := range allowedIPs {
 		if err := a.routes.AddRoute(aip.String(), a.ifaceName); err != nil {
 			log.Printf("wireguard: add route %s: %v", aip.String(), err)
 		}
@@ -163,7 +186,7 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 
 	a.running = true
 	a.startAt = time.Now()
-	log.Printf("wireguard started on %s (keepalive %v)", a.ifaceName, keepalive)
+	log.Printf("wireguard started on %s (mtu %d, keepalive %v)", a.ifaceName, mtu, keepalive)
 	return nil
 }
 
