@@ -48,6 +48,31 @@ func (i *Interface) Delete() error {
 	return nil
 }
 
+func (i *Interface) ConfigurePrivateKey(key wgtypes.Key) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	if i.client == nil {
+		return fmt.Errorf("interface not created")
+	}
+
+	cfg := wgtypes.Config{
+		PrivateKey: &key,
+	}
+	return i.client.ConfigureDevice(i.name, cfg)
+}
+
+func (i *Interface) ConfigureDevice(cfg wgtypes.Config) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	if i.client == nil {
+		return fmt.Errorf("interface not created")
+	}
+
+	return i.client.ConfigureDevice(i.name, cfg)
+}
+
 func (i *Interface) Up(cfg *wgtypes.Config) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -60,6 +85,13 @@ func (i *Interface) Up(cfg *wgtypes.Config) error {
 		return fmt.Errorf("configure device: %w", err)
 	}
 
+	i.running = true
+	return nil
+}
+
+func (i *Interface) SetUp() error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	i.running = true
 	return nil
 }
@@ -145,6 +177,10 @@ func (i *Interface) SetKeepAlive(interval time.Duration) error {
 }
 
 func (i *Interface) AddPeer(pubKey wgtypes.Key, endpoint *net.UDPAddr, allowedIPs []net.IPNet) error {
+	return i.AddPeerWithKeepAlive(pubKey, endpoint, allowedIPs, 25*time.Second)
+}
+
+func (i *Interface) AddPeerWithKeepAlive(pubKey wgtypes.Key, endpoint *net.UDPAddr, allowedIPs []net.IPNet, keepalive time.Duration) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
@@ -153,10 +189,11 @@ func (i *Interface) AddPeer(pubKey wgtypes.Key, endpoint *net.UDPAddr, allowedIP
 	}
 
 	peerCfg := wgtypes.PeerConfig{
-		PublicKey:         pubKey,
-		Endpoint:         endpoint,
-		AllowedIPs:       allowedIPs,
-		ReplaceAllowedIPs: true,
+		PublicKey:                   pubKey,
+		Endpoint:                   endpoint,
+		AllowedIPs:                 allowedIPs,
+		ReplaceAllowedIPs:          true,
+		PersistentKeepaliveInterval: &keepalive,
 	}
 
 	cfg := wgtypes.Config{
