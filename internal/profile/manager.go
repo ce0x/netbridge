@@ -12,16 +12,24 @@ import (
 )
 
 type Manager struct {
-	cfg     *config.Config
+	cfg      *config.Config
+	store    *Store
 	profiles map[string]*netbridge.Profile
 	activeID string
 }
 
 func NewManager(cfg *config.Config) *Manager {
-	return &Manager{
+	m := &Manager{
 		cfg:      cfg,
+		store:    NewStore(cfg),
 		profiles: make(map[string]*netbridge.Profile),
 	}
+	if existing, err := m.store.List(); err == nil {
+		for _, p := range existing {
+			m.profiles[p.ID] = p
+		}
+	}
+	return m
 }
 
 func (m *Manager) Import(ctx context.Context, raw string) (*netbridge.Profile, error) {
@@ -69,6 +77,9 @@ func (m *Manager) Save(ctx context.Context, p *netbridge.Profile) error {
 		p.CreatedAt = time.Now()
 	}
 	p.UpdatedAt = time.Now()
+	if err := m.store.Write(p); err != nil {
+		return fmt.Errorf("persist profile: %w", err)
+	}
 	m.profiles[p.ID] = p
 	return nil
 }
@@ -102,6 +113,9 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	if _, ok := m.profiles[id]; !ok {
 		return netbridge.ErrProfileNotFound
 	}
+	if err := m.store.Delete(id); err != nil {
+		return fmt.Errorf("delete profile from disk: %w", err)
+	}
 	delete(m.profiles, id)
 	return nil
 }
@@ -113,6 +127,9 @@ func (m *Manager) Rename(ctx context.Context, id, newName string) error {
 	}
 	p.Name = newName
 	p.UpdatedAt = time.Now()
+	if err := m.store.Write(p); err != nil {
+		return fmt.Errorf("persist rename: %w", err)
+	}
 	return nil
 }
 
@@ -126,6 +143,9 @@ func (m *Manager) Clone(ctx context.Context, id, newName string) (*netbridge.Pro
 	clone.Name = newName
 	clone.CreatedAt = time.Now()
 	clone.UpdatedAt = time.Now()
+	if err := m.store.Write(&clone); err != nil {
+		return nil, fmt.Errorf("persist clone: %w", err)
+	}
 	m.profiles[clone.ID] = &clone
 	return &clone, nil
 }
