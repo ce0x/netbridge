@@ -31,6 +31,7 @@ type Manager struct {
 	currentBackend netbridge.Backend
 	status         netbridge.ConnectionStatus
 	stateFile      string
+	lastKnownPID   int
 }
 
 func NewManager(pm *profile.Manager, plm netbridge.PluginManager, cfg *config.Config) *Manager {
@@ -128,7 +129,14 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 	if m.currentBackend != nil {
 		_ = m.currentBackend.Stop()
 		m.currentBackend = nil
+	} else if m.current != nil && m.lastKnownPID > 0 {
+		// Recovered session — kill orphaned process directly
+		if p, err := os.FindProcess(m.lastKnownPID); err == nil {
+			_ = p.Kill()
+		}
+		m.lastKnownPID = 0
 	}
+
 	if m.current != nil {
 		now := time.Now()
 		m.current.EndedAt = &now
@@ -189,13 +197,18 @@ func (m *Manager) Persist(ctx context.Context) error {
 		return nil
 	}
 
+	pid := 0
+	if m.currentBackend != nil {
+		pid = m.currentBackend.Status().PID
+	}
+
 	st := sessionState{
 		ID:          m.current.ID,
 		ProfileID:   m.current.ProfileID,
 		Mode:        m.current.Mode,
 		LocalAddr:   m.current.LocalAddr,
 		BackendName: "xray",
-		BackendPID:  0,
+		BackendPID:  pid,
 		StartedAt:   m.current.StartedAt,
 	}
 
@@ -231,6 +244,7 @@ func (m *Manager) Recover(ctx context.Context) error {
 			os.Remove(m.stateFile)
 			return nil
 		}
+		m.lastKnownPID = st.BackendPID
 	}
 
 	// Reconstruct session
