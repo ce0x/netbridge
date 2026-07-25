@@ -185,3 +185,70 @@ func TestProfileDeleteFromDisk(t *testing.T) {
 		t.Fatalf("expected 0 profiles after delete, got %d", len(profiles))
 	}
 }
+
+func TestActiveProfilePersistence(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{DataDir: dir}
+
+	// Manager 1: save profile and set active
+	mgr1 := NewManager(cfg)
+	ctx := context.Background()
+
+	p, err := mgr1.Import(ctx, "vless://user@active.example.com:443?security=tls&sni=active.example.com#active-test")
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	if err := mgr1.SetActive(ctx, p.ID); err != nil {
+		t.Fatalf("set active failed: %v", err)
+	}
+
+	// Manager 2: should load active profile from disk (simulates new CLI process)
+	mgr2 := NewManager(cfg)
+	active, err := mgr2.GetActive(ctx)
+	if err != nil {
+		t.Fatalf("GetActive on second manager failed: %v", err)
+	}
+	if active.ID != p.ID {
+		t.Errorf("expected active ID %s, got %s", p.ID, active.ID)
+	}
+	if active.Name != "active-test" {
+		t.Errorf("expected active name 'active-test', got '%s'", active.Name)
+	}
+}
+
+func TestActiveProfileStaleFileCleanup(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{DataDir: dir}
+
+	// Manager 1: save profile and set active
+	mgr1 := NewManager(cfg)
+	ctx := context.Background()
+
+	p, err := mgr1.Import(ctx, "vless://user@stale.example.com:443?security=tls&sni=stale.example.com#stale-test")
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	if err := mgr1.SetActive(ctx, p.ID); err != nil {
+		t.Fatalf("set active failed: %v", err)
+	}
+
+	// Delete the profile (simulates user removing it)
+	if err := mgr1.Delete(ctx, p.ID); err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+
+	// Manager 2: should NOT have active profile (file was cleared)
+	mgr2 := NewManager(cfg)
+	_, err = mgr2.GetActive(ctx)
+	if err == nil {
+		t.Error("expected error for stale active profile, got nil")
+	}
+
+	// Verify active_profile file was removed
+	activePath := filepath.Join(dir, "active_profile")
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
+		t.Error("expected active_profile file to be removed after stale cleanup")
+	}
+}

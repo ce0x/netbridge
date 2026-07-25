@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	netbridge "github.com/netbridge/netbridge"
@@ -27,6 +30,21 @@ func NewManager(cfg *config.Config) *Manager {
 	if existing, err := m.store.List(); err == nil {
 		for _, p := range existing {
 			m.profiles[p.ID] = p
+		}
+	}
+	// Load active profile from disk
+	if cfg != nil {
+		activePath := filepath.Join(cfg.DataDir, "active_profile")
+		if data, err := os.ReadFile(activePath); err == nil {
+			id := strings.TrimSpace(string(data))
+			if id != "" {
+				if _, ok := m.profiles[id]; ok {
+					m.activeID = id
+				} else {
+					// Profile was deleted, clear stale file
+					os.Remove(activePath)
+				}
+			}
 		}
 	}
 	return m
@@ -176,6 +194,12 @@ func (m *Manager) SetActive(ctx context.Context, id string) error {
 		return netbridge.ErrProfileNotFound
 	}
 	m.activeID = id
+	// Persist to disk
+	if m.cfg != nil {
+		activePath := filepath.Join(m.cfg.DataDir, "active_profile")
+		os.MkdirAll(filepath.Dir(activePath), 0o700)
+		os.WriteFile(activePath, []byte(id), 0o600)
+	}
 	return nil
 }
 
