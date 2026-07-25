@@ -53,6 +53,7 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 
 	a.config = cfg
 	a.configDir = filepath.Join(os.TempDir(), "netbridge-xray", cfg.Profile.ID)
+	logDir := filepath.Join(a.configDir, "logs")
 
 	if err := os.MkdirAll(a.configDir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
@@ -69,8 +70,22 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 	}
 
 	a.process = NewProcess()
-	if err := a.process.Start(configPath); err != nil {
+	if err := a.process.Start(configPath, logDir); err != nil {
 		return fmt.Errorf("start xray: %w", err)
+	}
+
+	// Check if xray crashed immediately
+	time.Sleep(600 * time.Millisecond)
+	if !a.process.Running() {
+		lines := a.process.LastLogLines()
+		errMsg := "xray crashed immediately after start"
+		if len(lines) > 0 {
+			errMsg += ":\n"
+			for _, line := range lines {
+				errMsg += "  " + line + "\n"
+			}
+		}
+		return fmt.Errorf(errMsg)
 	}
 
 	log.Printf("xray started (PID %d)", a.process.PID())

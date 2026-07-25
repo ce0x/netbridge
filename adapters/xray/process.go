@@ -1,9 +1,11 @@
 package xray
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -14,14 +16,18 @@ type Process struct {
 	pid     int
 	running bool
 	startAt time.Time
+	logFile *os.File
+	lines   []string
 	mu      sync.Mutex
 }
+
+const maxLogLines = 20
 
 func NewProcess() *Process {
 	return &Process{}
 }
 
-func (p *Process) Start(configPath string) error {
+func (p *Process) Start(configPath string, logDir string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -31,14 +37,29 @@ func (p *Process) Start(configPath string) error {
 
 	binary, err := FindBinary()
 	if err != nil {
-		return fmt.Errorf("xray binary not found: %w", err)
+		return fmt.Errorf("xray binary not installed, run: netbridge core install xray")
 	}
 
+	if logDir == "" {
+		logDir = filepath.Join(os.TempDir(), "netbridge-xray")
+	}
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
+
+	logPath := filepath.Join(logDir, "xray.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		return fmt.Errorf("create log file: %w", err)
+	}
+	p.logFile = logFile
+
 	p.cmd = exec.Command(binary, "run", "-c", configPath)
-	p.cmd.Stdout = nil
-	p.cmd.Stderr = nil
+	p.cmd.Stdout = logFile
+	p.cmd.Stderr = logFile
 
 	if err := p.cmd.Start(); err != nil {
+		logFile.Close()
 		return fmt.Errorf("start xray: %w", err)
 	}
 
@@ -47,8 +68,9 @@ func (p *Process) Start(configPath string) error {
 	p.startAt = time.Now()
 
 	go p.monitor()
+	go p.collectLogs(logPath)
 
-	// Wait a moment for xray to initialize
+	// Wait for xray to initialize
 	time.Sleep(500 * time.Millisecond)
 	return nil
 }
@@ -59,7 +81,13 @@ func (p *Process) Stop() error {
 
 	if p.cmd != nil && p.cmd.Process != nil {
 		p.running = false
-		return p.cmd.Process.Kill()
+		if err := p.cmd.Process.Kill(); err == nil {
+			p.cmd.Wait()
+		}
+	}
+	if p.logFile != nil {
+		p.logFile.Close()
+		p.logFile = nil
 	}
 	return nil
 }
@@ -94,6 +122,34 @@ func (p *Process) monitor() {
 	}
 }
 
+func (p *Process) collectLogs(logPath string) {
+	time.Sleep(2 * time.Second)
+	f, err := os.Open(logPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	p.mu.Lock()
+	if len(lines) > maxLogLines {
+		lines = lines[len(lines)-maxLogLines:]
+	}
+	p.lines = lines
+	p.mu.Unlock()
+}
+
+func (p *Process) LastLogLines() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lines
+}
+
 func (p *Process) WaitDone() {
 	for {
 		p.mu.Lock()
@@ -125,12 +181,12 @@ func (p *Process) Uptime() time.Duration {
 	return time.Since(p.startAt)
 }
 
-// FindBinary searches for the xray binary in common locations.
 func FindBinary() (string, error) {
 	paths := []string{
 		"xray",
 		"/usr/local/bin/xray",
 		"/usr/bin/xray",
+		"/usr/local/lib/netbridge/bin/xray",
 	}
 	for _, path := range paths {
 		if _, err := exec.LookPath(path); err == nil {
@@ -140,7 +196,6 @@ func FindBinary() (string, error) {
 	return "", fmt.Errorf("xray binary not found in PATH or common locations")
 }
 
-// IsRunning checks if a process with the given PID is alive.
 func IsRunning(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {

@@ -54,21 +54,36 @@ func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.
 		return nil, fmt.Errorf("backend start: %w", err)
 	}
 
-	// Retry health check up to 5 times with 1s delay
+	// Polling health check: try every 200ms until context expires
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
 	var healthErr error
-	for i := 0; i < 5; i++ {
-		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		healthErr = backend.HealthCheck(checkCtx)
-		cancel()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-checkCtx.Done():
+			// Timeout reached
+			if healthErr != nil {
+				_ = backend.Stop()
+				m.status = netbridge.StatusDisconnected
+				return nil, fmt.Errorf("health check after start: %w", healthErr)
+			}
+			// Context cancelled but no error (shouldn't happen)
+			_ = backend.Stop()
+			m.status = netbridge.StatusDisconnected
+			return nil, fmt.Errorf("health check timeout")
+		case <-ticker.C:
+			healthErr = backend.HealthCheck(checkCtx)
+			if healthErr == nil {
+				break
+			}
+		}
 		if healthErr == nil {
 			break
 		}
-		time.Sleep(1 * time.Second)
-	}
-	if healthErr != nil {
-		_ = backend.Stop()
-		m.status = netbridge.StatusDisconnected
-		return nil, fmt.Errorf("health check after start: %w", healthErr)
 	}
 
 	session := &netbridge.Session{

@@ -32,4 +32,5 @@ Thumbs.db
 .env.local
 
 # auto pushing git
-auto pushing git/auto-push.log
+auto pushing git/
+directory_structure.txt
