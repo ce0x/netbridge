@@ -12,13 +12,15 @@ import (
 )
 
 type Process struct {
-	cmd     *exec.Cmd
-	pid     int
-	running bool
-	startAt time.Time
-	logFile *os.File
-	lines   []string
-	mu      sync.Mutex
+	cmd      *exec.Cmd
+	pid      int
+	running  bool
+	startAt  time.Time
+	logFile  *os.File
+	logPath  string
+	lines    []string
+	exitedCh chan struct{}
+	mu       sync.Mutex
 }
 
 const maxLogLines = 20
@@ -66,9 +68,10 @@ func (p *Process) Start(configPath string, logDir string) error {
 	p.pid = p.cmd.Process.Pid
 	p.running = true
 	p.startAt = time.Now()
+	p.logPath = logPath
+	p.exitedCh = make(chan struct{})
 
 	go p.monitor()
-	go p.collectLogs(logPath)
 
 	// Wait for xray to initialize
 	time.Sleep(500 * time.Millisecond)
@@ -119,12 +122,18 @@ func (p *Process) monitor() {
 		p.mu.Lock()
 		p.running = false
 		p.mu.Unlock()
+		p.readLogNow()
+		if p.exitedCh != nil {
+			close(p.exitedCh)
+		}
 	}
 }
 
-func (p *Process) collectLogs(logPath string) {
-	time.Sleep(2 * time.Second)
-	f, err := os.Open(logPath)
+func (p *Process) readLogNow() {
+	if p.logPath == "" {
+		return
+	}
+	f, err := os.Open(p.logPath)
 	if err != nil {
 		return
 	}
@@ -142,6 +151,12 @@ func (p *Process) collectLogs(logPath string) {
 	}
 	p.lines = lines
 	p.mu.Unlock()
+}
+
+func (p *Process) WaitExited() {
+	if p.exitedCh != nil {
+		<-p.exitedCh
+	}
 }
 
 func (p *Process) LastLogLines() []string {

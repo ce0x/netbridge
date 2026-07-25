@@ -74,9 +74,11 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 		return fmt.Errorf("start xray: %w", err)
 	}
 
-	// Check if xray crashed immediately
-	time.Sleep(600 * time.Millisecond)
+	// Wait briefly for xray to start or crash
+	time.Sleep(500 * time.Millisecond)
 	if !a.process.Running() {
+		// Process exited — wait for monitor() to collect logs
+		a.process.WaitExited()
 		lines := a.process.LastLogLines()
 		errMsg := "xray crashed immediately after start"
 		if len(lines) > 0 {

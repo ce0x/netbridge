@@ -1,6 +1,7 @@
 package corebin
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -55,10 +56,10 @@ func (p *PackageManagerInstaller) Install(ctx context.Context, name string) erro
 		return fmt.Errorf("unsupported package manager: %s", pm)
 	}
 
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("install %s via %s: %w", pkgName, pm, err)
+		return fmt.Errorf("install %s via %s: %w\n%s", pkgName, pm, err, stderr.String())
 	}
 
 	fmt.Printf("Installed %s via %s\n", name, pm)
@@ -83,8 +84,10 @@ func (p *PackageManagerInstaller) Update(ctx context.Context, name string) error
 		return fmt.Errorf("unsupported package manager: %s", pm)
 	}
 
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("update %s: %w", pkgName, err)
+		return fmt.Errorf("update %s: %w\n%s", pkgName, err, stderr.String())
 	}
 
 	fmt.Printf("Updated %s via %s\n", name, pm)

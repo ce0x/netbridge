@@ -77,18 +77,23 @@ func (g *GitHubInstaller) findAsset(release githubRelease, name string) (string,
 
 		switch name {
 		case "xray":
-			// Xray-linux-64.zip / Xray-linux-arm64-v8a.zip
-			if goos == "linux" && goarch == "amd64" && strings.Contains(assetName, "linux") && strings.Contains(assetName, "64") {
-				return asset.BrowserDownloadURL, nil
-			}
-			if goos == "linux" && goarch == "arm64" && strings.Contains(assetName, "linux") && strings.Contains(assetName, "arm64") {
-				return asset.BrowserDownloadURL, nil
-			}
-			if goos == "darwin" && goarch == "amd64" && strings.Contains(assetName, "macos") && strings.Contains(assetName, "64") {
-				return asset.BrowserDownloadURL, nil
-			}
-			if goos == "darwin" && goarch == "arm64" && strings.Contains(assetName, "macos") && strings.Contains(assetName, "arm64") {
-				return asset.BrowserDownloadURL, nil
+			switch {
+			case goos == "linux" && goarch == "amd64":
+				if strings.HasSuffix(assetName, "linux-64.zip") {
+					return asset.BrowserDownloadURL, nil
+				}
+			case goos == "linux" && goarch == "arm64":
+				if strings.HasSuffix(assetName, "linux-arm64-v8a.zip") {
+					return asset.BrowserDownloadURL, nil
+				}
+			case goos == "darwin" && goarch == "amd64":
+				if strings.HasSuffix(assetName, "macos-64.zip") {
+					return asset.BrowserDownloadURL, nil
+				}
+			case goos == "darwin" && goarch == "arm64":
+				if strings.HasSuffix(assetName, "macos-arm64-v8a.zip") {
+					return asset.BrowserDownloadURL, nil
+				}
 			}
 
 		case "sing-box":
