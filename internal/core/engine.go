@@ -83,7 +83,7 @@ func New(cfg *config.Config) (*Engine, error) {
 	pm := profile.NewManager(cfg)
 	plm := plugins.NewRegistry()
 	registerBuiltinPlugins(plm)
-	sm := session.NewManager(pm, plm)
+	sm := session.NewManager(pm, plm, cfg)
 	re := routing.NewEngine()
 	he := health.NewEngine(pm)
 	be := benchmark.NewEngine(pm, he)
@@ -101,6 +101,9 @@ func New(cfg *config.Config) (*Engine, error) {
 		plugins:        plm,
 		statsCollector: sc,
 	}
+
+	// Recover session state from previous CLI run
+	_ = sm.Recover(context.Background())
 
 	return e, nil
 }

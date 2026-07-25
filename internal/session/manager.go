@@ -2,27 +2,48 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
 	"time"
 
 	netbridge "github.com/netbridge/netbridge"
+	"github.com/netbridge/netbridge/internal/config"
 	"github.com/netbridge/netbridge/internal/profile"
 )
 
-type Manager struct {
-	profileMgr    *profile.Manager
-	pluginMgr     netbridge.PluginManager
-	current       *netbridge.Session
-	currentBackend netbridge.Backend
-	status        netbridge.ConnectionStatus
+type sessionState struct {
+	ID           string               `json:"session_id"`
+	ProfileID    string               `json:"profile_id"`
+	Mode         netbridge.SessionMode `json:"mode"`
+	LocalAddr    string               `json:"local_addr"`
+	BackendName  string               `json:"backend_name"`
+	BackendPID   int                  `json:"backend_pid"`
+	StartedAt    time.Time            `json:"started_at"`
 }
 
-func NewManager(pm *profile.Manager, plm netbridge.PluginManager) *Manager {
-	return &Manager{
+type Manager struct {
+	profileMgr     *profile.Manager
+	pluginMgr      netbridge.PluginManager
+	current        *netbridge.Session
+	currentBackend netbridge.Backend
+	status         netbridge.ConnectionStatus
+	stateFile      string
+}
+
+func NewManager(pm *profile.Manager, plm netbridge.PluginManager, cfg *config.Config) *Manager {
+	m := &Manager{
 		profileMgr: pm,
 		pluginMgr:  plm,
 		status:     netbridge.StatusDisconnected,
 	}
+	if cfg != nil {
+		m.stateFile = filepath.Join(cfg.DataDir, "session.json")
+		os.MkdirAll(filepath.Dir(m.stateFile), 0o700)
+	}
+	return m
 }
 
 func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.SessionMode) (*netbridge.Session, error) {
@@ -65,13 +86,11 @@ func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.
 	for {
 		select {
 		case <-checkCtx.Done():
-			// Timeout reached
 			if healthErr != nil {
 				_ = backend.Stop()
 				m.status = netbridge.StatusDisconnected
 				return nil, fmt.Errorf("health check after start: %w", healthErr)
 			}
-			// Context cancelled but no error (shouldn't happen)
 			_ = backend.Stop()
 			m.status = netbridge.StatusDisconnected
 			return nil, fmt.Errorf("health check timeout")
@@ -99,6 +118,9 @@ func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.
 	m.currentBackend = backend
 	m.status = netbridge.StatusConnected
 
+	// Persist state to disk
+	_ = m.Persist(ctx)
+
 	return session, nil
 }
 
@@ -114,6 +136,11 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 	}
 	m.status = netbridge.StatusDisconnected
 	m.current = nil
+
+	// Remove state file
+	if m.stateFile != "" {
+		os.Remove(m.stateFile)
+	}
 	return nil
 }
 
@@ -158,11 +185,74 @@ func (m *Manager) Stats() netbridge.TrafficStats {
 }
 
 func (m *Manager) Persist(ctx context.Context) error {
-	return nil
+	if m.stateFile == "" || m.current == nil {
+		return nil
+	}
+
+	st := sessionState{
+		ID:          m.current.ID,
+		ProfileID:   m.current.ProfileID,
+		Mode:        m.current.Mode,
+		LocalAddr:   m.current.LocalAddr,
+		BackendName: "xray",
+		BackendPID:  0,
+		StartedAt:   m.current.StartedAt,
+	}
+
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(m.stateFile, data, 0o600)
 }
 
 func (m *Manager) Recover(ctx context.Context) error {
+	if m.stateFile == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(m.stateFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var st sessionState
+	if err := json.Unmarshal(data, &st); err != nil {
+		os.Remove(m.stateFile)
+		return nil
+	}
+
+	// Check if backend PID is still alive
+	if st.BackendPID > 0 {
+		if !pidAlive(st.BackendPID) {
+			os.Remove(m.stateFile)
+			return nil
+		}
+	}
+
+	// Reconstruct session
+	m.current = &netbridge.Session{
+		ID:        st.ID,
+		ProfileID: st.ProfileID,
+		Mode:      st.Mode,
+		LocalAddr: st.LocalAddr,
+		Status:    netbridge.StatusConnected,
+		StartedAt: st.StartedAt,
+	}
+	m.status = netbridge.StatusConnected
 	return nil
+}
+
+func pidAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil
 }
 
 func generateSessionID() string {

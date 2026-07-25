@@ -24,5 +24,5 @@ var helpCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(helpCmd)
+	rootCmd.SetHelpCommand(helpCmd)
 }

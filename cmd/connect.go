@@ -65,6 +65,9 @@ uses the currently active profile.`,
 			return err
 		}
 
+		// Set as active profile for health/test/status commands
+		_ = mgr.SetActive(ctx, profileID)
+
 		if jsonOutput {
 			fmt.Printf(`{"success":true,"command":"connect","data":{"session_id":"%s","profile_id":"%s","mode":"%s","local_addr":"%s"}}`,
 				sess.ID, sess.ProfileID, sess.Mode, sess.LocalAddr)
