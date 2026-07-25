@@ -94,6 +94,14 @@ func (g *GitHubInstaller) findAsset(release githubRelease, name string) (string,
 				if strings.HasSuffix(assetName, "macos-arm64-v8a.zip") {
 					return asset.BrowserDownloadURL, nil
 				}
+			case goos == "windows" && goarch == "amd64":
+				if strings.HasSuffix(assetName, "windows-64.zip") {
+					return asset.BrowserDownloadURL, nil
+				}
+			case goos == "windows" && goarch == "arm64":
+				if strings.HasSuffix(assetName, "windows-arm64-v8a.zip") {
+					return asset.BrowserDownloadURL, nil
+				}
 			}
 
 		case "sing-box":

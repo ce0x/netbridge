@@ -128,19 +128,22 @@ func getPackageName(name string) string {
 }
 
 func extractVersion(output string) string {
+	if output == "" {
+		return "unknown"
+	}
 	// Try to extract version from dpkg/rpm output
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "Version:") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
 		}
-		if strings.HasPrefix(line, "Name:") {
-			continue
-		}
 	}
-	// Fallback: return first line
-	if len(lines) > 0 {
-		return strings.TrimSpace(lines[0])
+	// Fallback: return first non-empty line
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			return trimmed
+		}
 	}
 	return "unknown"
 }
