@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os/user"
 	"runtime"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	netbridge "github.com/netbridge/netbridge"
 	"github.com/netbridge/netbridge/internal/selfupdate"
+	"golang.org/x/net/proxy"
 )
 
 var (
@@ -65,6 +68,8 @@ type App struct {
 	msgAge      int
 	ipv4        string
 	ipv6        string
+	egressIP    string
+	egressAge   int
 	tickCount   int
 	ping        time.Duration
 	lastBytesUp int64
@@ -97,18 +102,23 @@ func (a *App) detectNetwork() {
 		if !ok {
 			continue
 		}
-		if ip := ipNet.IP.To4(); ip != nil && !ip.IsLoopback() {
-			if ip.IsPrivate() {
-				a.ipv4 = ip.String()
-			} else if fallback4 == "" {
-				fallback4 = ip.String()
+		// Handle IPv4
+		if ip4 := ipNet.IP.To4(); ip4 != nil {
+			if !ip4.IsLoopback() {
+				if ip4.IsPrivate() {
+					a.ipv4 = ip4.String()
+				} else if fallback4 == "" {
+					fallback4 = ip4.String()
+				}
 			}
+			continue // do NOT fall through to IPv6 branch
 		}
-		if ip := ipNet.IP.To16(); ip != nil && !ip.IsLoopback() && ip.String() != "::1" {
-			if isULAPrefix(ip) {
-				a.ipv6 = ip.String()
+		// Handle real IPv6
+		if ip6 := ipNet.IP.To16(); ip6 != nil && !ip6.IsLoopback() {
+			if isULAPrefix(ip6) {
+				a.ipv6 = ip6.String()
 			} else if fallback6 == "" {
-				fallback6 = ip.String()
+				fallback6 = ip6.String()
 			}
 		}
 	}
@@ -215,6 +225,13 @@ func (a *App) refreshData() {
 				a.lastBytesDn = a.stats.BytesDown
 				a.lastTick = now
 			}
+
+			// Check egress IP every 30 seconds
+			a.egressAge++
+			if a.egressIP == "" || a.egressAge >= 30 {
+				a.egressAge = 0
+				go a.checkEgressIP(sess.LocalAddr)
+			}
 		}
 	} else {
 		a.profileName = ""
@@ -225,7 +242,42 @@ func (a *App) refreshData() {
 		a.ping = 0
 		a.rateUp = 0
 		a.rateDown = 0
+		a.egressIP = ""
 	}
+}
+
+func (a *App) checkEgressIP(localAddr string) {
+	dialer, err := proxy.SOCKS5("tcp", localAddr, nil, proxy.Direct)
+	if err != nil {
+		a.egressIP = "unreachable"
+		return
+	}
+
+	transport := &http.Transport{
+		DialContext: dialer.(interface {
+			DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+		}).DialContext,
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second,
+	}
+
+	resp, err := client.Get("https://api.ipify.org")
+	if err != nil {
+		a.egressIP = "unreachable"
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		a.egressIP = "unreachable"
+		return
+	}
+
+	a.egressIP = strings.TrimSpace(string(body))
 }
 
 func (a *App) View() string {
@@ -290,6 +342,15 @@ func (a *App) View() string {
 			ipv6Str = "N/A"
 		}
 		sb.WriteString(fmt.Sprintf("  Local IPv4: %-20s IPv6: %s\n", ipv4Str, ipv6Str))
+
+		// Egress IP (through tunnel)
+		egressStr := "checking..."
+		if a.egressIP == "unreachable" {
+			egressStr = statusErr.Render("unreachable")
+		} else if a.egressIP != "" {
+			egressStr = a.egressIP + " (via tunnel)"
+		}
+		sb.WriteString(fmt.Sprintf("  Egress IP:  %s\n", egressStr))
 
 		// Mode info
 		modeStr := "unknown"
