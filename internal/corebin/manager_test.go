@@ -1,6 +1,9 @@
 package corebin
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -253,5 +256,83 @@ func TestExtractVersion(t *testing.T) {
 				t.Errorf("extractVersion() = %s, want %s", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestFindAsset_Amd64NeverMatchesArm64(t *testing.T) {
+	g := NewGitHubInstaller("/tmp/test")
+
+	release := githubRelease{
+		TagName: "v1.8.0",
+		Assets: []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		}{
+			{Name: "Xray-linux-64.zip", BrowserDownloadURL: "https://example.com/linux-64.zip"},
+			{Name: "Xray-linux-arm64-v8a.zip", BrowserDownloadURL: "https://example.com/linux-arm64.zip"},
+			{Name: "Xray-windows-64.zip", BrowserDownloadURL: "https://example.com/win-64.zip"},
+		},
+	}
+
+	url, err := g.findAsset(release, "xray")
+	if err != nil {
+		t.Fatalf("findAsset failed: %v", err)
+	}
+
+	// Regression test: amd64 must never match arm64 asset
+	if runtime.GOARCH == "amd64" && runtime.GOOS == "linux" {
+		if url != "https://example.com/linux-64.zip" {
+			t.Errorf("amd64 should match linux-64.zip, got %s", url)
+		}
+	}
+	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
+		if url != "https://example.com/linux-arm64.zip" {
+			t.Errorf("arm64 should match linux-arm64.zip, got %s", url)
+		}
+	}
+	// On Windows, should match windows-64.zip
+	if runtime.GOOS == "windows" {
+		if url != "https://example.com/win-64.zip" {
+			t.Errorf("windows should match win-64.zip, got %s", url)
+		}
+	}
+}
+
+func TestGitHubInstaller_InstallHTTP(t *testing.T) {
+	var server *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/test/repo/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(githubRelease{
+			TagName: "v1.0.0",
+			Assets: []struct {
+				Name               string `json:"name"`
+				BrowserDownloadURL string `json:"browser_download_url"`
+			}{
+				{Name: "test-binary.zip", BrowserDownloadURL: server.URL + "/download/test-binary.zip"},
+			},
+		})
+	})
+
+	server = httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/repos/test/repo/releases/latest")
+	if err != nil {
+		t.Fatalf("HTTP request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var release githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if release.TagName != "v1.0.0" {
+		t.Errorf("expected tag v1.0.0, got %s", release.TagName)
 	}
 }

@@ -15,11 +15,12 @@ import (
 )
 
 type Adapter struct {
-	config    netbridge.BackendConfig
-	builder   *Builder
-	process   *Process
-	configDir string
-	mu        sync.Mutex
+	config      netbridge.BackendConfig
+	builder     *Builder
+	process     *Process
+	configDir   string
+	statsClient *StatsClient
+	mu          sync.Mutex
 }
 
 func New() *Adapter {
@@ -87,10 +88,15 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 				errMsg += "  " + line + "\n"
 			}
 		}
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	log.Printf("xray started (PID %d)", a.process.PID())
+
+	// Initialize stats client for traffic monitoring
+	apiPort := cfg.LocalPort + 1000
+	a.statsClient = NewStatsClient(apiPort)
+
 	return nil
 }
 
@@ -172,14 +178,28 @@ func (a *Adapter) Stats() netbridge.TrafficStats {
 	a.mu.Lock()
 	running := a.process != nil && a.process.Running()
 	process := a.process
+	client := a.statsClient
 	a.mu.Unlock()
 
 	if !running || process == nil {
 		return netbridge.TrafficStats{}
 	}
-	return netbridge.TrafficStats{
+
+	stats := netbridge.TrafficStats{
 		Uptime: process.Uptime(),
 	}
+
+	// Query real traffic stats from xray gRPC API
+	if client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if ts, err := client.QueryStats(ctx); err == nil {
+			stats.BytesUp = ts.Up
+			stats.BytesDown = ts.Down
+		}
+	}
+
+	return stats
 }
 
 func (a *Adapter) Configure(cfg netbridge.BackendConfig) error {

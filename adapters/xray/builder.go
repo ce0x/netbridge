@@ -9,11 +9,13 @@ import (
 type Builder struct{}
 
 func (b *Builder) BuildConfig(cfg netbridge.BackendConfig) ([]byte, error) {
+	apiPort := cfg.LocalPort + 1000
+
 	xrayCfg := map[string]any{
 		"log": map[string]any{
 			"loglevel": "warning",
 		},
-		"inbounds":  b.buildInbounds(cfg),
+		"inbounds":  b.buildInbounds(cfg, apiPort),
 		"outbounds": b.buildOutbounds(cfg),
 		"stats":     map[string]any{},
 		"api": map[string]any{
@@ -28,13 +30,33 @@ func (b *Builder) BuildConfig(cfg netbridge.BackendConfig) ([]byte, error) {
 				"statsOutboundDownlink": true,
 			},
 		},
+		"routing": map[string]any{
+			"rules": []map[string]any{
+				{
+					"type":        "field",
+					"inboundTag":  []string{"api-in"},
+					"outboundTag": "api",
+				},
+			},
+		},
 	}
 
 	return json.MarshalIndent(xrayCfg, "", "  ")
 }
 
-func (b *Builder) buildInbounds(cfg netbridge.BackendConfig) []map[string]any {
+func (b *Builder) buildInbounds(cfg netbridge.BackendConfig, apiPort int) []map[string]any {
 	var inbounds []map[string]any
+
+	// API inbound for stats
+	inbounds = append(inbounds, map[string]any{
+		"tag":      "api-in",
+		"listen":   "127.0.0.1",
+		"port":     apiPort,
+		"protocol": "dokodemo-door",
+		"settings": map[string]any{
+			"address": "127.0.0.1",
+		},
+	})
 
 	switch cfg.Mode {
 	case netbridge.ModeSOCKS:
