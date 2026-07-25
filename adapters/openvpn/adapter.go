@@ -1,4 +1,4 @@
-﻿package openvpn
+package openvpn
 
 import (
 	"bufio"
@@ -54,6 +54,7 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 	}
 
 	a.config = cfg
+	a.configDir = filepath.Join(os.TempDir(), "netbridge-openvpn", cfg.Profile.ID)
 
 	if err := os.MkdirAll(a.configDir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
