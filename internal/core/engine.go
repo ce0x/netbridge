@@ -2,9 +2,16 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
 	"sync"
 
 	netbridge "github.com/netbridge/netbridge"
+	"github.com/netbridge/netbridge/adapters/openvpn"
+	"github.com/netbridge/netbridge/adapters/singbox"
+	"github.com/netbridge/netbridge/adapters/wireguard"
+	"github.com/netbridge/netbridge/adapters/xray"
 	"github.com/netbridge/netbridge/internal/benchmark"
 	"github.com/netbridge/netbridge/internal/config"
 	"github.com/netbridge/netbridge/internal/dns"
@@ -29,14 +36,58 @@ type Engine struct {
 	mu             sync.RWMutex
 }
 
+type builtinPlugin struct {
+	name      string
+	protocols []netbridge.Protocol
+	factory   func() netbridge.Backend
+}
+
+func (p *builtinPlugin) Name() string                        { return p.name }
+func (p *builtinPlugin) Version() string                     { return "builtin" }
+func (p *builtinPlugin) Protocols() []netbridge.Protocol      { return p.protocols }
+func (p *builtinPlugin) NewBackend(_ netbridge.Profile) (netbridge.Backend, error) {
+	return p.factory(), nil
+}
+
+func registerBuiltinPlugins(reg *plugins.Registry) {
+	reg.Register(&builtinPlugin{
+		name:      "xray",
+		protocols: []netbridge.Protocol{
+			netbridge.ProtocolVLESS, netbridge.ProtocolVMess,
+			netbridge.ProtocolTrojan, netbridge.ProtocolShadowsocks,
+			netbridge.ProtocolSOCKS, netbridge.ProtocolHTTP,
+		},
+		factory: func() netbridge.Backend { return xray.New() },
+	})
+	reg.Register(&builtinPlugin{
+		name:      "singbox",
+		protocols: []netbridge.Protocol{
+			netbridge.ProtocolVLESS, netbridge.ProtocolVMess,
+			netbridge.ProtocolTrojan, netbridge.ProtocolShadowsocks,
+		},
+		factory: func() netbridge.Backend { return singbox.New() },
+	})
+	reg.Register(&builtinPlugin{
+		name:      "wireguard",
+		protocols: []netbridge.Protocol{netbridge.ProtocolWireGuard},
+		factory:   func() netbridge.Backend { return wireguard.New() },
+	})
+	reg.Register(&builtinPlugin{
+		name:      "openvpn",
+		protocols: []netbridge.Protocol{netbridge.ProtocolOpenVPN},
+		factory:   func() netbridge.Backend { return openvpn.New() },
+	})
+}
+
 func New(cfg *config.Config) (*Engine, error) {
 	pm := profile.NewManager(cfg)
-	sm := session.NewManager(pm)
+	plm := plugins.NewRegistry()
+	registerBuiltinPlugins(plm)
+	sm := session.NewManager(pm, plm)
 	re := routing.NewEngine()
 	he := health.NewEngine(pm)
 	be := benchmark.NewEngine(pm, he)
 	de := dns.NewEngine()
-	plm := plugins.NewRegistry()
 	sc := stats.NewCollector()
 
 	e := &Engine{
@@ -83,7 +134,20 @@ func (e *Engine) PluginManager() netbridge.PluginManager {
 }
 
 func (e *Engine) RunCommand(ctx context.Context, profileID string, argv []string) error {
-	return nil
+	if len(argv) == 0 {
+		return fmt.Errorf("no command specified")
+	}
+
+	envVars := e.EnvVars()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = os.Environ()
+	for k, v := range envVars {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func (e *Engine) EnvVars() map[string]string {

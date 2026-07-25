@@ -10,14 +10,17 @@ import (
 )
 
 type Manager struct {
-	profileMgr *profile.Manager
-	current    *netbridge.Session
-	status     netbridge.ConnectionStatus
+	profileMgr    *profile.Manager
+	pluginMgr     netbridge.PluginManager
+	current       *netbridge.Session
+	currentBackend netbridge.Backend
+	status        netbridge.ConnectionStatus
 }
 
-func NewManager(pm *profile.Manager) *Manager {
+func NewManager(pm *profile.Manager, plm netbridge.PluginManager) *Manager {
 	return &Manager{
 		profileMgr: pm,
+		pluginMgr:  plm,
 		status:     netbridge.StatusDisconnected,
 	}
 }
@@ -34,6 +37,31 @@ func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.
 
 	m.status = netbridge.StatusConnecting
 
+	backend, err := m.pluginMgr.BackendFor(p.Protocol)
+	if err != nil {
+		m.status = netbridge.StatusDisconnected
+		return nil, fmt.Errorf("no backend for %s: %w", p.Protocol, err)
+	}
+
+	bcfg := netbridge.BackendConfig{
+		Profile:   *p,
+		Mode:      mode,
+		LocalPort: resolveLocalPort(mode),
+		TUNName:   "tun0",
+	}
+	if err := backend.Start(ctx, bcfg); err != nil {
+		m.status = netbridge.StatusDisconnected
+		return nil, fmt.Errorf("backend start: %w", err)
+	}
+
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := backend.HealthCheck(checkCtx); err != nil {
+		_ = backend.Stop()
+		m.status = netbridge.StatusDisconnected
+		return nil, fmt.Errorf("health check after start: %w", err)
+	}
+
 	session := &netbridge.Session{
 		ID:        generateSessionID(),
 		ProfileID: p.ID,
@@ -44,12 +72,17 @@ func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.
 	}
 
 	m.current = session
+	m.currentBackend = backend
 	m.status = netbridge.StatusConnected
 
 	return session, nil
 }
 
 func (m *Manager) Disconnect(ctx context.Context) error {
+	if m.currentBackend != nil {
+		_ = m.currentBackend.Stop()
+		m.currentBackend = nil
+	}
 	if m.current != nil {
 		now := time.Now()
 		m.current.EndedAt = &now
@@ -122,5 +155,18 @@ func resolveLocalAddr(mode netbridge.SessionMode) string {
 		return "tun0"
 	default:
 		return "127.0.0.1:10808"
+	}
+}
+
+func resolveLocalPort(mode netbridge.SessionMode) int {
+	switch mode {
+	case netbridge.ModeSOCKS:
+		return 10808
+	case netbridge.ModeHTTP:
+		return 8080
+	case netbridge.ModeTUN:
+		return 12345
+	default:
+		return 10808
 	}
 }

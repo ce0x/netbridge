@@ -35,6 +35,8 @@ func ParseWireGuardConf(content string) (*netbridge.Profile, error) {
 		return nil, fmt.Errorf("no [Peer] section found")
 	}
 
+	iface := sections["Interface"]
+
 	endpoint := peer["Endpoint"]
 	server := endpoint
 	port := 51820
@@ -44,16 +46,31 @@ func ParseWireGuardConf(content string) (*netbridge.Profile, error) {
 		fmt.Sscanf(endpoint[idx+1:], "%d", &port)
 	}
 
+	outbound := map[string]any{
+		"allowed_ips": peer["AllowedIPs"],
+		"public_key":  peer["PublicKey"],
+		"preshared":   peer["PresharedKey"],
+		"endpoint":    endpoint,
+	}
+
+	if iface != nil {
+		if pk := iface["PrivateKey"]; pk != "" {
+			outbound["private_key"] = pk
+		}
+		if addr := iface["Address"]; addr != "" {
+			outbound["address"] = addr
+		}
+		if dns := iface["DNS"]; dns != "" {
+			outbound["dns"] = dns
+		}
+	}
+
 	return &netbridge.Profile{
 		Name:     fmt.Sprintf("wg-%s", server),
 		Protocol: netbridge.ProtocolWireGuard,
 		Backend:  "wireguard",
 		Server:   server,
 		Port:     port,
-		Outbound: map[string]any{
-			"allowed_ips": peer["AllowedIPs"],
-			"public_key":  peer["PublicKey"],
-			"preshared":   peer["PresharedKey"],
-		},
+		Outbound: outbound,
 	}, nil
 }

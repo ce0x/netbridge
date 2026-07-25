@@ -64,5 +64,9 @@ func ParseVMess(raw string) (*netbridge.Profile, error) {
 		Port:      port,
 		Transport: transport,
 		TLS:       tls,
+		Outbound: map[string]any{
+			"id":        cfg.ID,
+			"alter_id":  cfg.Aid,
+		},
 	}, nil
 }

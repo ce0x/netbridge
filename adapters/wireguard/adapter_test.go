@@ -1,4 +1,4 @@
-﻿package wireguard
+package wireguard
 
 import (
 	"context"
@@ -96,6 +96,9 @@ func TestAdapter_StartMissingPublicKey(t *testing.T) {
 }
 
 func TestAdapter_StartMissingAddress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: requires wireguard kernel module")
+	}
 	a := New()
 	cfg := netbridge.BackendConfig{
 		Profile: netbridge.Profile{

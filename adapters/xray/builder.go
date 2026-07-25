@@ -2,7 +2,6 @@ package xray
 
 import (
 	"encoding/json"
-	"fmt"
 
 	netbridge "github.com/netbridge/netbridge"
 )
@@ -74,12 +73,19 @@ func (b *Builder) buildOutbounds(cfg netbridge.BackendConfig) []map[string]any {
 func (b *Builder) buildOutboundSettings(cfg netbridge.BackendConfig) map[string]any {
 	protocol := string(cfg.Profile.Protocol)
 
-	if protocol == "vless" {
-		user := map[string]any{
-			"id": cfg.Profile.Server,
+	switch protocol {
+	case "vless":
+		user := map[string]any{}
+		if id, ok := cfg.Profile.Outbound["id"]; ok {
+			user["id"] = id
 		}
 		if cfg.Profile.Flow != "" {
 			user["flow"] = cfg.Profile.Flow
+		}
+		if cfg.Profile.Encryption != "" {
+			user["encryption"] = cfg.Profile.Encryption
+		} else {
+			user["encryption"] = "none"
 		}
 		return map[string]any{
 			"vnext": []map[string]any{
@@ -90,32 +96,62 @@ func (b *Builder) buildOutboundSettings(cfg netbridge.BackendConfig) map[string]
 				},
 			},
 		}
-	}
 
-	settings := map[string]any{
-		"servers": []map[string]any{
-			{
-				"address": cfg.Profile.Server,
-				"port":    cfg.Profile.Port,
-			},
-		},
-	}
-
-	if cfg.Profile.Outbound != nil {
-		if uuid, ok := cfg.Profile.Outbound["uuid"]; ok {
-			settings["vnext"] = []map[string]any{
+	case "vmess":
+		user := map[string]any{}
+		if id, ok := cfg.Profile.Outbound["id"]; ok {
+			user["id"] = id
+		}
+		if aid, ok := cfg.Profile.Outbound["alter_id"]; ok {
+			user["alterId"] = aid
+		}
+		return map[string]any{
+			"vnext": []map[string]any{
 				{
 					"address": cfg.Profile.Server,
 					"port":    cfg.Profile.Port,
-					"users": []map[string]any{
-						{"id": uuid},
-					},
+					"users":   []map[string]any{user},
 				},
-			}
+			},
+		}
+
+	case "trojan":
+		server := map[string]any{
+			"address": cfg.Profile.Server,
+			"port":    cfg.Profile.Port,
+		}
+		if pw, ok := cfg.Profile.Outbound["password"]; ok {
+			server["password"] = pw
+		}
+		return map[string]any{
+			"servers": []map[string]any{server},
+		}
+
+	case "shadowsocks":
+		server := map[string]any{
+			"address": cfg.Profile.Server,
+			"port":    cfg.Profile.Port,
+		}
+		if method, ok := cfg.Profile.Outbound["method"]; ok {
+			server["method"] = method
+		}
+		if pw, ok := cfg.Profile.Outbound["password"]; ok {
+			server["password"] = pw
+		}
+		return map[string]any{
+			"servers": []map[string]any{server},
+		}
+
+	default:
+		return map[string]any{
+			"servers": []map[string]any{
+				{
+					"address": cfg.Profile.Server,
+					"port":    cfg.Profile.Port,
+				},
+			},
 		}
 	}
-
-	return settings
 }
 
 func (b *Builder) buildStreamSettings(cfg netbridge.BackendConfig) map[string]any {
@@ -165,8 +201,4 @@ func (b *Builder) buildStreamSettings(cfg netbridge.BackendConfig) map[string]an
 	}
 
 	return stream
-}
-
-func unused() {
-	_ = fmt.Sprintf
 }

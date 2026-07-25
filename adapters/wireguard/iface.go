@@ -1,9 +1,10 @@
-﻿package wireguard
+package wireguard
 
 import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,13 @@ func NewInterface(name string) *Interface {
 func (i *Interface) Create(config []byte) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+
+	cmd := exec.Command("ip", "link", "add", i.name, "type", "wireguard")
+	if err := cmd.Run(); err != nil {
+		if !isCommandNotFound(err) {
+			return fmt.Errorf("create wireguard interface: %w", err)
+		}
+	}
 
 	client, err := wgctrl.New()
 	if err != nil {
@@ -235,4 +243,14 @@ func (i *Interface) SetMTU(mtu int) error {
 		return fmt.Errorf("set mtu: %w", err)
 	}
 	return nil
+}
+
+func isCommandNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "No such file")
 }

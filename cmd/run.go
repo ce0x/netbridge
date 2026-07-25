@@ -12,12 +12,17 @@ var runCmd = &cobra.Command{
 	Long:  `Executes the specified command with proxy environment variables set.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		eng, err := getEngine()
+		if err != nil {
+			return err
+		}
+
 		if jsonOutput {
 			fmt.Printf(`{"success":true,"command":"run","data":{"argv":%v}}`, args)
 			return nil
 		}
-		fmt.Printf("Running: %v\n", args)
-		return nil
+
+		return eng.RunCommand(cmd.Context(), "", args)
 	},
 }
 

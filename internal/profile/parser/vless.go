@@ -19,6 +19,11 @@ func ParseVLESS(raw string) (*netbridge.Profile, error) {
 		return nil, err
 	}
 
+	uuid := u.User.Username()
+	if uuid == "" {
+		return nil, fmt.Errorf("vless uri missing user id (uuid)")
+	}
+
 	server := u.Hostname()
 	portStr := u.Port()
 	port := 443
@@ -53,10 +58,6 @@ func ParseVLESS(raw string) (*netbridge.Profile, error) {
 	}
 
 	flow := query.Get("flow")
-	if flow != "" && flow != "xtls-rprx-vision" {
-		// Unknown flow value — keep as-is for forward compatibility
-	}
-
 	if flow == "xtls-rprx-vision" && !tls.Enabled {
 		return nil, fmt.Errorf("flow xtls-rprx-vision requires TLS or Reality (security must not be none)")
 	}
@@ -75,5 +76,8 @@ func ParseVLESS(raw string) (*netbridge.Profile, error) {
 		Flow:       flow,
 		Encryption: encryption,
 		Tags:       tags,
+		Outbound: map[string]any{
+			"id": uuid,
+		},
 	}, nil
 }
