@@ -47,6 +47,9 @@ func (p *Process) Start(configPath string) error {
 	p.startAt = time.Now()
 
 	go p.monitor()
+
+	// Wait a moment for xray to initialize
+	time.Sleep(500 * time.Millisecond)
 	return nil
 }
 

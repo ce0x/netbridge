@@ -54,12 +54,21 @@ func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.
 		return nil, fmt.Errorf("backend start: %w", err)
 	}
 
-	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	if err := backend.HealthCheck(checkCtx); err != nil {
+	// Retry health check up to 5 times with 1s delay
+	var healthErr error
+	for i := 0; i < 5; i++ {
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		healthErr = backend.HealthCheck(checkCtx)
+		cancel()
+		if healthErr == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if healthErr != nil {
 		_ = backend.Stop()
 		m.status = netbridge.StatusDisconnected
-		return nil, fmt.Errorf("health check after start: %w", err)
+		return nil, fmt.Errorf("health check after start: %w", healthErr)
 	}
 
 	session := &netbridge.Session{
