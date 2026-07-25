@@ -95,7 +95,8 @@ func (a *Adapter) Start(ctx context.Context, cfg netbridge.BackendConfig) error 
 
 	// Initialize stats client for traffic monitoring
 	apiPort := cfg.LocalPort + 1000
-	a.statsClient = NewStatsClient(apiPort)
+	binaryPath, _ := FindBinary()
+	a.statsClient = NewStatsClient(binaryPath, apiPort)
 
 	return nil
 }
