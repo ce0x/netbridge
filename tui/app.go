@@ -33,15 +33,16 @@ var (
 		Foreground(lipgloss.Color("170")).
 		Bold(true)
 
-	menuText = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
 			Italic(true)
 
 	updateBanner = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("220")).
+			Bold(true)
+
+	resultStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("86")).
 			Bold(true)
 
 	separator = lipgloss.NewStyle().
@@ -60,18 +61,26 @@ type App struct {
 	port        int
 	mode        string
 	localAddr   string
-	updateMsg   string
+	statusMsg   string
+	msgAge      int
 	ipv4        string
 	ipv6        string
 	tickCount   int
+	ping        time.Duration
+	lastBytesUp int64
+	lastBytesDn int64
+	lastTick    time.Time
+	rateUp      float64
+	rateDown    float64
 }
 
 type tickMsg struct{}
 
 func NewApp(engine netbridge.CoreEngine) *App {
 	a := &App{
-		engine:   engine,
+		engine:    engine,
 		localAddr: "127.0.0.1:10808",
+		lastTick:  time.Now(),
 	}
 	a.detectNetwork()
 	return a
@@ -82,18 +91,37 @@ func (a *App) detectNetwork() {
 	if err != nil {
 		return
 	}
+	var fallback4, fallback6 string
 	for _, addr := range addrs {
 		ipNet, ok := addr.(*net.IPNet)
 		if !ok {
 			continue
 		}
-		if ipNet.IP.To4() != nil && !ipNet.IP.IsLoopback() {
-			a.ipv4 = ipNet.IP.String()
+		if ip := ipNet.IP.To4(); ip != nil && !ip.IsLoopback() {
+			if ip.IsPrivate() {
+				a.ipv4 = ip.String()
+			} else if fallback4 == "" {
+				fallback4 = ip.String()
+			}
 		}
-		if ipNet.IP.To4() == nil && !ipNet.IP.IsLoopback() && ipNet.IP.String() != "::1" {
-			a.ipv6 = ipNet.IP.String()
+		if ip := ipNet.IP.To16(); ip != nil && !ip.IsLoopback() && ip.String() != "::1" {
+			if isULAPrefix(ip) {
+				a.ipv6 = ip.String()
+			} else if fallback6 == "" {
+				fallback6 = ip.String()
+			}
 		}
 	}
+	if a.ipv4 == "" {
+		a.ipv4 = fallback4
+	}
+	if a.ipv6 == "" {
+		a.ipv6 = fallback6
+	}
+}
+
+func isULAPrefix(ip net.IP) bool {
+	return len(ip) == 16 && ip[0] == 0xfc
 }
 
 func (a *App) Init() tea.Cmd {
@@ -115,8 +143,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		a.tickCount++
+		a.msgAge++
+		if a.msgAge > 8 {
+			a.statusMsg = ""
+		}
 		a.refreshData()
 		return a, tickCmd()
+
+	case string:
+		a.statusMsg = msg
+		a.msgAge = 0
+		return a, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -125,16 +162,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 
 		case "1":
+			a.statusMsg = ""
 			return a, a.doImport()
 		case "2":
+			a.statusMsg = ""
 			return a, a.doConnect()
 		case "3":
+			a.statusMsg = ""
 			return a, a.doStatus()
 		case "4":
+			a.statusMsg = ""
 			return a, a.doDisconnect()
 		case "5":
+			a.statusMsg = ""
 			return a, a.doUpdateCheck()
 		case "h", "H":
+			a.statusMsg = ""
 			return a, a.doHelp()
 		}
 	}
@@ -161,6 +204,17 @@ func (a *App) refreshData() {
 				a.port = p.Port
 			}
 			a.stats = a.engine.SessionManager().Stats()
+
+			// Calculate transfer rate
+			now := time.Now()
+			elapsed := now.Sub(a.lastTick).Seconds()
+			if elapsed > 0 {
+				a.rateUp = float64(a.stats.BytesUp-a.lastBytesUp) / elapsed
+				a.rateDown = float64(a.stats.BytesDown-a.lastBytesDn) / elapsed
+				a.lastBytesUp = a.stats.BytesUp
+				a.lastBytesDn = a.stats.BytesDown
+				a.lastTick = now
+			}
 		}
 	} else {
 		a.profileName = ""
@@ -168,6 +222,9 @@ func (a *App) refreshData() {
 		a.port = 0
 		a.mode = ""
 		a.localAddr = ""
+		a.ping = 0
+		a.rateUp = 0
+		a.rateDown = 0
 	}
 }
 
@@ -212,9 +269,16 @@ func (a *App) View() string {
 	if a.status == netbridge.StatusConnected && a.profileName != "" {
 		sb.WriteString(fmt.Sprintf("  Profile: %s (%s:%d)\n", a.profileName, a.serverInfo, a.port))
 
-		// Stats line — upload/download are zero until T13 xray stats gRPC is wired
-		uptime := a.stats.Uptime.Round(time.Second)
-		sb.WriteString(fmt.Sprintf("  Ping: 0ms   ↑ 0 KB/s   ↓ 0 KB/s   Uptime: %s\n", uptime))
+		// Ping (real if measured, otherwise shows N/A until first measurement)
+		pingStr := "N/A"
+		if a.ping > 0 {
+			pingStr = fmt.Sprintf("%dms", a.ping.Milliseconds())
+		}
+		sb.WriteString(fmt.Sprintf("  Ping: %s   ↑ %s   ↓ %s   Uptime: %s\n",
+			pingStr,
+			formatRate(a.rateUp),
+			formatRate(a.rateDown),
+			a.stats.Uptime.Round(time.Second)))
 
 		// Network info
 		ipv4Str := a.ipv4
@@ -258,12 +322,21 @@ func (a *App) View() string {
 	sb.WriteString(line2 + "\n")
 	sb.WriteString(line3 + "\n")
 
-	// ─── Update banner ───
-	if a.updateMsg != "" {
-		sb.WriteString("\n" + updateBanner.Render("  "+a.updateMsg))
+	// ─── Status message from actions ───
+	if a.statusMsg != "" {
+		sb.WriteString("\n" + resultStyle.Render("  "+a.statusMsg))
 	}
 
 	return sb.String()
+}
+
+func formatRate(bps float64) string {
+	if bps < 1024 {
+		return fmt.Sprintf("%.0f B/s", bps)
+	} else if bps < 1024*1024 {
+		return fmt.Sprintf("%.1f KB/s", bps/1024)
+	}
+	return fmt.Sprintf("%.1f MB/s", bps/(1024*1024))
 }
 
 // ─── Actions ───
@@ -271,74 +344,78 @@ func (a *App) View() string {
 func (a *App) doImport() tea.Cmd {
 	return func() tea.Msg {
 		if a.engine == nil {
-			return tea.Msg("no engine")
+			return "no engine"
 		}
-		// List current profiles for feedback
 		profiles, err := a.engine.ProfileManager().List(context.Background())
 		if err != nil {
-			return tea.Msg(fmt.Sprintf("error listing profiles: %v", err))
+			return fmt.Sprintf("Error listing profiles: %v", err)
 		}
-		return tea.Msg(fmt.Sprintf("Profiles: %d total. Use 'netbridge profile import <uri>' to add.", len(profiles)))
+		if len(profiles) == 0 {
+			return "No profiles. Run 'netbridge profile import <uri>' to add one."
+		}
+		var names []string
+		for _, p := range profiles {
+			names = append(names, fmt.Sprintf("%s (%s:%d)", p.Name, p.Server, p.Port))
+		}
+		return fmt.Sprintf("Profiles (%d): %s", len(profiles), strings.Join(names, ", "))
 	}
 }
 
 func (a *App) doConnect() tea.Cmd {
 	return func() tea.Msg {
 		if a.engine == nil {
-			return tea.Msg("no engine")
+			return "no engine"
 		}
 		ctx := context.Background()
 		mgr := a.engine.ProfileManager()
 
-		// Try active profile first
 		active, err := mgr.GetActive(ctx)
 		if err != nil {
-			// Try first available profile
 			profiles, listErr := mgr.List(ctx)
 			if listErr != nil || len(profiles) == 0 {
-				return tea.Msg("no profiles available — import one first")
+				return "No profiles available — import one first."
 			}
 			active = profiles[0]
 		}
 
 		_, err = a.engine.SessionManager().Connect(ctx, active.ID, netbridge.ModeSOCKS)
 		if err != nil {
-			return tea.Msg(fmt.Sprintf("connect error: %v", err))
+			return fmt.Sprintf("Connect error: %v", err)
 		}
 		_ = mgr.SetActive(ctx, active.ID)
-		return tea.Msg(fmt.Sprintf("Connected to %s", active.Name))
+		return fmt.Sprintf("Connected to %s", active.Name)
 	}
 }
 
 func (a *App) doStatus() tea.Cmd {
 	return func() tea.Msg {
 		if a.engine == nil {
-			return tea.Msg("no engine")
+			return "no engine"
 		}
 		sm := a.engine.SessionManager()
 		status := sm.Status()
 		if status == netbridge.StatusDisconnected {
-			return tea.Msg("Status: Disconnected — no active session")
+			return "Status: Disconnected — no active session"
 		}
 		sess, err := sm.Current()
 		if err != nil {
-			return tea.Msg(fmt.Sprintf("Status: %s", status))
+			return fmt.Sprintf("Status: %s", status)
 		}
 		stats := sm.Stats()
-		return tea.Msg(fmt.Sprintf("Status: %s | Session: %s | Uptime: %s",
-			status, sess.ID, stats.Uptime.Round(time.Second)))
+		return fmt.Sprintf("Status: %s | Session: %s | Uptime: %s",
+			status, sess.ID, stats.Uptime.Round(time.Second))
 	}
 }
 
 func (a *App) doDisconnect() tea.Cmd {
 	return func() tea.Msg {
 		if a.engine == nil {
-			return tea.Msg("no engine")
+			return "no engine"
 		}
 		if err := a.engine.SessionManager().Disconnect(context.Background()); err != nil {
-			return tea.Msg(fmt.Sprintf("disconnect error: %v", err))
+			return fmt.Sprintf("Disconnect error: %v", err)
 		}
-		return tea.Msg("Disconnected")
+		return "Disconnected"
 	}
 }
 
@@ -346,19 +423,18 @@ func (a *App) doUpdateCheck() tea.Cmd {
 	return func() tea.Msg {
 		info, err := selfupdate.CheckLatest(context.Background())
 		if err != nil {
-			return tea.Msg(fmt.Sprintf("update check error: %v", err))
+			return fmt.Sprintf("Update check error: %v", err)
 		}
 		if info.UpdateAvailable {
-			return tea.Msg(fmt.Sprintf("Update available: %s → %s (run 'netbridge update install')", info.Current, info.Latest))
+			return fmt.Sprintf("Update available: %s → %s (run 'netbridge update install')", info.Current, info.Latest)
 		}
-		return tea.Msg(fmt.Sprintf("Already up to date (%s)", info.Current))
+		return fmt.Sprintf("Already up to date (%s)", info.Current)
 	}
 }
 
 func (a *App) doHelp() tea.Cmd {
 	return func() tea.Msg {
-		help := `
-Commands:
+		return `Commands:
   netbridge tui                    Launch this dashboard
   netbridge profile import <uri>   Import a VLESS/VMess/Trojan/SS profile
   netbridge profile list           List all profiles
@@ -368,9 +444,7 @@ Commands:
   netbridge health [profile]       Health check a profile
   netbridge core install --all     Install all core backends
   netbridge update check           Check for updates
-  netbridge update install         Install latest version
-`
-		return tea.Msg(help)
+  netbridge update install         Install latest version`
 	}
 }
 
