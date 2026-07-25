@@ -27,10 +27,11 @@ type githubRelease struct {
 }
 
 type UpdateInfo struct {
-	Current    string
-	Latest     string
-	DownloadURL string
+	Current         string
+	Latest          string
+	DownloadURL     string
 	UpdateAvailable bool
+	NoReleases      bool
 }
 
 func CheckLatest(ctx context.Context) (*UpdateInfo, error) {
@@ -49,6 +50,10 @@ func CheckLatest(ctx context.Context) (*UpdateInfo, error) {
 
 	if resp.StatusCode == 403 {
 		return nil, fmt.Errorf("GitHub API rate limit exceeded")
+	}
+	if resp.StatusCode == 404 {
+		current := strings.TrimPrefix(CurrentVersion, "v")
+		return &UpdateInfo{Current: current, NoReleases: true}, nil
 	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)

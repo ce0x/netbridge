@@ -126,15 +126,19 @@ func (m *Manager) Connect(ctx context.Context, profileID string, mode netbridge.
 }
 
 func (m *Manager) Disconnect(ctx context.Context) error {
+	stoppedSomething := false
+
 	if m.currentBackend != nil {
 		_ = m.currentBackend.Stop()
 		m.currentBackend = nil
+		stoppedSomething = true
 	} else if m.current != nil && m.lastKnownPID > 0 {
 		// Recovered session — kill orphaned process directly
 		if p, err := os.FindProcess(m.lastKnownPID); err == nil {
 			_ = p.Kill()
 		}
 		m.lastKnownPID = 0
+		stoppedSomething = true
 	}
 
 	if m.current != nil {
@@ -148,6 +152,10 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 	// Remove state file
 	if m.stateFile != "" {
 		os.Remove(m.stateFile)
+	}
+
+	if !stoppedSomething {
+		return netbridge.ErrNoActiveSession
 	}
 	return nil
 }

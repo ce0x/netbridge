@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
+	netbridge "github.com/netbridge/netbridge"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +18,14 @@ var disconnectCmd = &cobra.Command{
 		}
 
 		if err := eng.SessionManager().Disconnect(cmd.Context()); err != nil {
+			if errors.Is(err, netbridge.ErrNoActiveSession) {
+				if jsonOutput {
+					fmt.Print(`{"success":true,"command":"disconnect","data":{"status":"already_disconnected"}}`)
+					return nil
+				}
+				fmt.Println("Already disconnected.")
+				return nil
+			}
 			if jsonOutput {
 				fmt.Printf(`{"success":false,"error":"%s"}`, err)
 				return nil

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	netbridge "github.com/netbridge/netbridge"
@@ -50,11 +51,16 @@ var (
 
 	separator = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
+
+	inputLabel = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("170")).
+			Bold(true)
 )
 
 type App struct {
 	engine      netbridge.CoreEngine
 	quitting    bool
+	currentView string // "dashboard" or "import"
 	width       int
 	height      int
 	stats       netbridge.TrafficStats
@@ -77,18 +83,25 @@ type App struct {
 	lastTick    time.Time
 	rateUp      float64
 	rateDown    float64
+	importInput textinput.Model
 }
 
 type tickMsg struct{}
 
 func NewApp(engine netbridge.CoreEngine) *App {
-	a := &App{
-		engine:    engine,
-		localAddr: "127.0.0.1:10808",
-		lastTick:  time.Now(),
+	ti := textinput.New()
+	ti.Placeholder = "vless://user@server:443?security=tls&sni=server.com#name"
+	ti.Focus()
+	ti.CharLimit = 4096
+	ti.Width = 60
+
+	return &App{
+		engine:      engine,
+		currentView: "dashboard",
+		localAddr:   "127.0.0.1:10808",
+		lastTick:    time.Now(),
+		importInput: ti,
 	}
-	a.detectNetwork()
-	return a
 }
 
 func (a *App) detectNetwork() {
@@ -102,7 +115,6 @@ func (a *App) detectNetwork() {
 		if !ok {
 			continue
 		}
-		// Handle IPv4
 		if ip4 := ipNet.IP.To4(); ip4 != nil {
 			if !ip4.IsLoopback() {
 				if ip4.IsPrivate() {
@@ -111,9 +123,8 @@ func (a *App) detectNetwork() {
 					fallback4 = ip4.String()
 				}
 			}
-			continue // do NOT fall through to IPv6 branch
+			continue
 		}
-		// Handle real IPv6
 		if ip6 := ipNet.IP.To16(); ip6 != nil && !ip6.IsLoopback() {
 			if isULAPrefix(ip6) {
 				a.ipv6 = ip6.String()
@@ -135,7 +146,7 @@ func isULAPrefix(ip net.IP) bool {
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), tea.EnterAltScreen)
+	return tea.Batch(tickCmd(), tea.EnterAltScreen, textinput.Blink)
 }
 
 func tickCmd() tea.Cmd {
@@ -145,6 +156,12 @@ func tickCmd() tea.Cmd {
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Import input mode
+	if a.currentView == "import" {
+		return a.updateImport(msg)
+	}
+
+	// Dashboard mode
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -173,7 +190,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "1":
 			a.statusMsg = ""
-			return a, a.doImport()
+			a.currentView = "import"
+			a.importInput.SetValue("")
+			return a, textinput.Blink
 		case "2":
 			a.statusMsg = ""
 			return a, a.doConnect()
@@ -193,6 +212,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, nil
+}
+
+func (a *App) updateImport(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			a.currentView = "dashboard"
+			return a, nil
+		case "enter":
+			value := a.importInput.Value()
+			if value == "" {
+				a.currentView = "dashboard"
+				return a, nil
+			}
+			a.currentView = "dashboard"
+			return a, a.doImportURI(value)
+		}
+	}
+
+	var cmd tea.Cmd
+	a.importInput, cmd = a.importInput.Update(msg)
+	return a, cmd
 }
 
 func (a *App) refreshData() {
@@ -215,7 +257,6 @@ func (a *App) refreshData() {
 			}
 			a.stats = a.engine.SessionManager().Stats()
 
-			// Calculate transfer rate
 			now := time.Now()
 			elapsed := now.Sub(a.lastTick).Seconds()
 			if elapsed > 0 {
@@ -226,7 +267,6 @@ func (a *App) refreshData() {
 				a.lastTick = now
 			}
 
-			// Check egress IP every 30 seconds
 			a.egressAge++
 			if a.egressIP == "" || a.egressAge >= 30 {
 				a.egressAge = 0
@@ -285,9 +325,29 @@ func (a *App) View() string {
 		return "\nGoodbye!\n"
 	}
 
+	// Import input view
+	if a.currentView == "import" {
+		return a.importView()
+	}
+
+	// Dashboard view
+	return a.dashboardView()
+}
+
+func (a *App) importView() string {
+	var sb strings.Builder
+	sb.WriteString("\n")
+	sb.WriteString(inputLabel.Render("  Paste vless://, vmess://, trojan://, or ss:// link:"))
+	sb.WriteString("\n\n")
+	sb.WriteString("  " + a.importInput.View())
+	sb.WriteString("\n\n")
+	sb.WriteString(helpStyle.Render("  Enter to import · Esc to cancel"))
+	return sb.String()
+}
+
+func (a *App) dashboardView() string {
 	var sb strings.Builder
 
-	// ─── Header with ASCII logo ───
 	logo := `
   _   _    _  _____ ____  _____   __
  | \ | |  / \|_   _/ ___|| ____| / _|
@@ -298,10 +358,8 @@ func (a *App) View() string {
 	sb.WriteString(titleStyle.Render(logo))
 	sb.WriteString("\n")
 
-	// ─── Separator ───
 	sb.WriteString(separator.Render(strings.Repeat("═", 52)) + "\n")
 
-	// ─── System info line ───
 	now := time.Now().Format("15:04:05")
 	username := "unknown"
 	if u, err := user.Current(); err == nil {
@@ -314,14 +372,11 @@ func (a *App) View() string {
 	sb.WriteString(fmt.Sprintf("  Time: %-20s OS: %s/%s\n", now, runtime.GOOS, runtime.GOARCH))
 	sb.WriteString(fmt.Sprintf("  User: %-20s %s\n", username, statusStr))
 
-	// ─── Separator ───
 	sb.WriteString(separator.Render(strings.Repeat("─", 52)) + "\n")
 
-	// ─── Profile info ───
 	if a.status == netbridge.StatusConnected && a.profileName != "" {
 		sb.WriteString(fmt.Sprintf("  Profile: %s (%s:%d)\n", a.profileName, a.serverInfo, a.port))
 
-		// Ping (real if measured, otherwise shows N/A until first measurement)
 		pingStr := "N/A"
 		if a.ping > 0 {
 			pingStr = fmt.Sprintf("%dms", a.ping.Milliseconds())
@@ -332,7 +387,6 @@ func (a *App) View() string {
 			formatRate(a.rateDown),
 			a.stats.Uptime.Round(time.Second)))
 
-		// Network info
 		ipv4Str := a.ipv4
 		if ipv4Str == "" {
 			ipv4Str = "N/A"
@@ -343,7 +397,6 @@ func (a *App) View() string {
 		}
 		sb.WriteString(fmt.Sprintf("  Local IPv4: %-20s IPv6: %s\n", ipv4Str, ipv6Str))
 
-		// Egress IP (through tunnel)
 		egressStr := "checking..."
 		if a.egressIP == "unreachable" {
 			egressStr = statusErr.Render("unreachable")
@@ -352,7 +405,6 @@ func (a *App) View() string {
 		}
 		sb.WriteString(fmt.Sprintf("  Egress IP:  %s\n", egressStr))
 
-		// Mode info
 		modeStr := "unknown"
 		switch a.mode {
 		case "socks":
@@ -368,10 +420,8 @@ func (a *App) View() string {
 		sb.WriteString("\n")
 	}
 
-	// ─── Separator ───
 	sb.WriteString(separator.Render(strings.Repeat("─", 52)) + "\n")
 
-	// ─── Menu grid ───
 	line1 := fmt.Sprintf("  %s Import    %s Connect    %s Status",
 		menuKey.Render("[1]"), menuKey.Render("[2]"), menuKey.Render("[3]"))
 	line2 := fmt.Sprintf("  %s Disconnect  %s Update    %s Help",
@@ -383,7 +433,6 @@ func (a *App) View() string {
 	sb.WriteString(line2 + "\n")
 	sb.WriteString(line3 + "\n")
 
-	// ─── Status message from actions ───
 	if a.statusMsg != "" {
 		sb.WriteString("\n" + resultStyle.Render("  "+a.statusMsg))
 	}
@@ -402,23 +451,16 @@ func formatRate(bps float64) string {
 
 // ─── Actions ───
 
-func (a *App) doImport() tea.Cmd {
+func (a *App) doImportURI(uri string) tea.Cmd {
 	return func() tea.Msg {
 		if a.engine == nil {
 			return "no engine"
 		}
-		profiles, err := a.engine.ProfileManager().List(context.Background())
+		p, err := a.engine.ProfileManager().Import(context.Background(), uri)
 		if err != nil {
-			return fmt.Sprintf("Error listing profiles: %v", err)
+			return fmt.Sprintf("Import error: %v", err)
 		}
-		if len(profiles) == 0 {
-			return "No profiles. Run 'netbridge profile import <uri>' to add one."
-		}
-		var names []string
-		for _, p := range profiles {
-			names = append(names, fmt.Sprintf("%s (%s:%d)", p.Name, p.Server, p.Port))
-		}
-		return fmt.Sprintf("Profiles (%d): %s", len(profiles), strings.Join(names, ", "))
+		return fmt.Sprintf("Imported: %s → %s:%d (id: %s)", p.Name, p.Server, p.Port, p.ID[:8])
 	}
 }
 
@@ -485,6 +527,9 @@ func (a *App) doUpdateCheck() tea.Cmd {
 		info, err := selfupdate.CheckLatest(context.Background())
 		if err != nil {
 			return fmt.Sprintf("Update check error: %v", err)
+		}
+		if info.NoReleases {
+			return "No releases published yet"
 		}
 		if info.UpdateAvailable {
 			return fmt.Sprintf("Update available: %s → %s (run 'netbridge update install')", info.Current, info.Latest)
