@@ -8,12 +8,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// resolveProfile tries Get(id) first, then GetByName(name).
+// resolveProfile tries Get(id) first, then prefix match, then GetByName(name).
 func resolveProfile(ctx context.Context, mgr netbridge.ProfileManager, arg string) (*netbridge.Profile, error) {
 	p, err := mgr.Get(ctx, arg)
 	if err == nil {
 		return p, nil
 	}
+
+	// Try prefix match on ID
+	profiles, listErr := mgr.List(ctx)
+	if listErr == nil {
+		var prefixMatches []*netbridge.Profile
+		for _, pp := range profiles {
+			if len(arg) <= len(pp.ID) && pp.ID[:len(arg)] == arg {
+				prefixMatches = append(prefixMatches, pp)
+			}
+		}
+		if len(prefixMatches) == 1 {
+			return prefixMatches[0], nil
+		}
+		if len(prefixMatches) > 1 {
+			return nil, fmt.Errorf("ambiguous ID %q matches multiple profiles", arg)
+		}
+	}
+
 	return mgr.GetByName(ctx, arg)
 }
 
