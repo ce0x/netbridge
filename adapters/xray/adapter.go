@@ -169,7 +169,17 @@ func (a *Adapter) Status() netbridge.BackendStatus {
 }
 
 func (a *Adapter) Stats() netbridge.TrafficStats {
-	return netbridge.TrafficStats{}
+	a.mu.Lock()
+	running := a.process != nil && a.process.Running()
+	process := a.process
+	a.mu.Unlock()
+
+	if !running || process == nil {
+		return netbridge.TrafficStats{}
+	}
+	return netbridge.TrafficStats{
+		Uptime: process.Uptime(),
+	}
 }
 
 func (a *Adapter) Configure(cfg netbridge.BackendConfig) error {

@@ -15,6 +15,19 @@ func (b *Builder) BuildConfig(cfg netbridge.BackendConfig) ([]byte, error) {
 		},
 		"inbounds":  b.buildInbounds(cfg),
 		"outbounds": b.buildOutbounds(cfg),
+		"stats":     map[string]any{},
+		"api": map[string]any{
+			"tag":      "api",
+			"services": []string{"StatsService"},
+		},
+		"policy": map[string]any{
+			"system": map[string]any{
+				"statsInboundUplink":   true,
+				"statsInboundDownlink": true,
+				"statsOutboundUplink":  true,
+				"statsOutboundDownlink": true,
+			},
+		},
 	}
 
 	return json.MarshalIndent(xrayCfg, "", "  ")
