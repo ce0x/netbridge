@@ -1,4 +1,4 @@
-﻿package openvpn
+package openvpn
 
 import (
 	"fmt"
@@ -28,7 +28,12 @@ func (p *Process) Start(configPath string) error {
 		return fmt.Errorf("already running (PID %d)", p.pid)
 	}
 
-	p.cmd = exec.Command("openvpn", "--config", configPath)
+	binary, err := FindBinary()
+	if err != nil {
+		return fmt.Errorf("openvpn binary not found: %w", err)
+	}
+
+	p.cmd = exec.Command(binary, "--config", configPath)
 	p.cmd.Stdout = nil
 	p.cmd.Stderr = nil
 
@@ -114,4 +119,18 @@ func (p *Process) WaitDone() {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func FindBinary() (string, error) {
+	paths := []string{
+		"openvpn",
+		"/usr/local/bin/openvpn",
+		"/usr/sbin/openvpn",
+	}
+	for _, path := range paths {
+		if _, err := exec.LookPath(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("openvpn binary not found in PATH or common locations")
 }

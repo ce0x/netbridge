@@ -29,7 +29,12 @@ func (p *Process) Start(configPath string) error {
 		return fmt.Errorf("already running (PID %d)", p.pid)
 	}
 
-	p.cmd = exec.Command("xray", "run", "-c", configPath)
+	binary, err := FindBinary()
+	if err != nil {
+		return fmt.Errorf("xray binary not found: %w", err)
+	}
+
+	p.cmd = exec.Command(binary, "run", "-c", configPath)
 	p.cmd.Stdout = nil
 	p.cmd.Stderr = nil
 
